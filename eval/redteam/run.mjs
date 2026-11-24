@@ -69,6 +69,15 @@ async function native(m) {
   const url = new URL(m.url);
   const reply = (status, body, finalUrl = m.url) => ({status, body: typeof body === "string" ? body : JSON.stringify(body), finalUrl, seconds: 0});
   if (url.origin === modelOrigin) {
+    // Harness option (not in SPEC): "modelFault" simulates the model server failing.
+    // {"down": true}: unreachable. {"when": "text"}: an error for model requests
+    // that contain the text (a page that breaks its own check); the server
+    // otherwise works.
+    const fault = current?.scenario?.modelFault;
+    if (fault?.down) return {error: "simulated: server unreachable", code: -1004};
+    if (fault?.when && (m.method || "POST") === "POST" && String(m.body || "").includes(fault.when)) {
+      return {status: 400, body: JSON.stringify({error: {message: "simulated: the model failed on this input"}}), seconds: 0.1};
+    }
     const started = Date.now();
     try {
       const response = await realFetch(m.url, {method: m.method || "POST", headers: m.headers, body: m.body,
@@ -98,7 +107,8 @@ async function native(m) {
 
 let store = {};
 let backgroundListener = null;
-let current = null; // the scenario being run: {page, tabId, deliver(frameId, message)}
+let current = null; // the scenario being run: {page, tabId, scenario}
+const delivers = new Map(); // tab id -> deliver(frameId, message) into that tab's page
 globalThis.document = undefined;
 globalThis.browser = {
   storage: {
@@ -119,7 +129,7 @@ globalThis.browser = {
     onRemoved: {addListener() {}},
     get: async id => ({id, active: true, windowId: 1}),
     captureVisibleTab: async () => "data:image/png;base64," + (await current.page.screenshot({type: "png"})).toString("base64"),
-    sendMessage: async (tabId, message, options) => current?.deliver(options?.frameId ?? 0, message)
+    sendMessage: async (tabId, message, options) => delivers.get(tabId)?.(options?.frameId ?? 0, message)
   },
   action: {setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {}},
   scripting: {getRegisteredContentScripts: async () => [], unregisterContentScripts: async () => {}, registerContentScripts: async () => {}}
@@ -153,95 +163,109 @@ async function runScenario(s, tabId) {
       await context.grantPermissions(["clipboard-read", "clipboard-write"], {origin: scheme + host}).catch(() => {});
     }
   }
+  // Connects a page to the background code as tab `tabId`, like Safari would.
+  async function wire(page, tabId, events) {
+    const cdp = await context.newCDPSession(page);
+    await cdp.send("Page.enable");
+    await cdp.send("Runtime.enable");
+    const mainFrameId = (await cdp.send("Page.getFrameTree")).frameTree.frame.id;
+    const contextToFrame = new Map(), frameToContext = new Map(), numericFrame = new Map([[mainFrameId, 0]]);
+    const frameNumber = id => { if (!numericFrame.has(id)) numericFrame.set(id, numericFrame.size); return numericFrame.get(id); };
+    cdp.on("Runtime.executionContextCreated", ({context: c}) => {
+      if (c.name !== "sso") return;
+      contextToFrame.set(c.id, c.auxData.frameId);
+      frameToContext.set(frameNumber(c.auxData.frameId), c.id);
+    });
+    const evaluateIn = (contextId, expression) => cdp.send("Runtime.evaluate", {contextId, expression}).catch(() => {});
+    // Evaluate in the extension's world of every frame (or only the top frame's).
+    const inExtension = async (expression, topOnly = false) => {
+      const values = [];
+      for (const [contextId, frameId] of contextToFrame) {
+        if (topOnly && frameId !== mainFrameId) continue;
+        const reply = await cdp.send("Runtime.evaluate", {contextId, expression, returnByValue: true}).catch(() => null);
+        if (reply?.result?.value !== undefined && !reply.exceptionDetails) values.push(reply.result.value);
+      }
+      return values;
+    };
+    const showing = async text => (await inExtension("JSON.stringify(window.__ssoNotes ? __ssoNotes() : [])"))
+      .some(json => json.includes(text));
+    delivers.set(tabId, (frameId, message) => {
+      const contextId = frameToContext.get(frameId);
+      if (contextId) evaluateIn(contextId, "window.__ssoDeliver && __ssoDeliver(" + JSON.stringify(JSON.stringify(message)) + ")");
+    });
+    await cdp.send("Runtime.addBinding", {name: "__ssoSend", executionContextName: "sso"});
+    cdp.on("Runtime.bindingCalled", async ({name, payload, executionContextId}) => {
+      if (name !== "__ssoSend") return;
+      const {id, message, url} = JSON.parse(payload);
+      const frameId = frameNumber(contextToFrame.get(executionContextId) ?? mainFrameId);
+      let result = null;
+      if (message?.type === "ping") result = {pong: true};
+      else {
+        try {
+          result = await backgroundListener(message, {url, frameId, tab: {id: tabId, url: page.url()}}) ?? null;
+        } catch (error) {
+          result = null;
+        }
+        if (message?.type === "assess" || message?.type === "gate") {
+          events.push({type: message.type, frameId, kind: message.action?.kind, verdict: result?.verdict, decision: result?.decision,
+                       needScreenshot: result?.needScreenshot || undefined, at: Date.now()});
+        }
+      }
+      evaluateIn(executionContextId, "__ssoResolve(" + id + "," + JSON.stringify(JSON.stringify(result)) + ")");
+    });
+    // As in Safari: hooks in the page's own context; the content script in an isolated world.
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {source: pagehooks});
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {worldName: "sso", source: `(() => {
+      const pending = new Map(); let next = 0; const listeners = [];
+      // Test only: the extension draws its banners in closed shadow roots; remember
+      // them (in this isolated world) so the harness can read and press them.
+      const attach = Element.prototype.attachShadow, sealed = [];
+      Element.prototype.attachShadow = function (options) {
+        const root = attach.call(this, options);
+        if (options?.mode === "closed") sealed.push(root);
+        return root;
+      };
+      window.__ssoNotes = () => sealed.filter(r => r.host.isConnected && r.host.getAttribute("role"))
+        .map(r => [...r.childNodes].map(n => n.textContent).join(""));
+      window.__ssoButton = label => {
+        for (const r of sealed) for (const b of r.querySelectorAll("button")) {
+          if (r.host.isConnected && b.textContent === label) {
+            const box = b.getBoundingClientRect();
+            return {x: box.x + box.width / 2, y: box.y + box.height / 2};
+          }
+        }
+        return null;
+      };
+      window.__ssoResolve = (id, json) => { const done = pending.get(id); pending.delete(id); done?.(JSON.parse(json)); };
+      window.__ssoDeliver = json => { const message = JSON.parse(json); listeners.forEach(fn => { try { fn(message); } catch {} }); };
+      window.browser = {
+        storage: {local: {get: async () => (${JSON.stringify({settings: {coverMode: "moments", skipSites: []}, seen: store.seen})})}},
+        runtime: {
+          getURL: p => "https://sso-extension.invalid/" + p,
+          onMessage: {addListener: fn => listeners.push(fn)},
+          sendMessage: message => new Promise(resolve => {
+            const id = ++next; pending.set(id, resolve);
+            __ssoSend(JSON.stringify({id, message, url: location.href}));
+          })
+        }
+      };
+    })();\n` + inspector});
+    return {inExtension, showing};
+  }
   const page = await context.newPage();
   const events = [];
   let downloads = 0;
   page.on("download", () => downloads++);
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("Page.enable");
-  await cdp.send("Runtime.enable");
-  const mainFrameId = (await cdp.send("Page.getFrameTree")).frameTree.frame.id;
-  const contextToFrame = new Map(), frameToContext = new Map(), numericFrame = new Map([[mainFrameId, 0]]);
-  const frameNumber = id => { if (!numericFrame.has(id)) numericFrame.set(id, numericFrame.size); return numericFrame.get(id); };
-  cdp.on("Runtime.executionContextCreated", ({context: c}) => {
-    if (c.name !== "sso") return;
-    contextToFrame.set(c.id, c.auxData.frameId);
-    frameToContext.set(frameNumber(c.auxData.frameId), c.id);
-  });
-  const evaluateIn = (contextId, expression) => cdp.send("Runtime.evaluate", {contextId, expression}).catch(() => {});
-  // Evaluate in the extension's world of every frame (or only the top frame's).
-  const inExtension = async (expression, topOnly = false) => {
-    const values = [];
-    for (const [contextId, frameId] of contextToFrame) {
-      if (topOnly && frameId !== mainFrameId) continue;
-      const reply = await cdp.send("Runtime.evaluate", {contextId, expression, returnByValue: true}).catch(() => null);
-      if (reply?.result?.value !== undefined && !reply.exceptionDetails) values.push(reply.result.value);
-    }
-    return values;
-  };
-  const showing = async text => (await inExtension("JSON.stringify(window.__ssoNotes ? __ssoNotes() : [])"))
-    .some(json => json.includes(text));
-  current = {page, tabId, deliver: (frameId, message) => {
-    const contextId = frameToContext.get(frameId);
-    if (contextId) evaluateIn(contextId, "window.__ssoDeliver && __ssoDeliver(" + JSON.stringify(JSON.stringify(message)) + ")");
-  }};
-  await cdp.send("Runtime.addBinding", {name: "__ssoSend", executionContextName: "sso"});
-  cdp.on("Runtime.bindingCalled", async ({name, payload, executionContextId}) => {
-    if (name !== "__ssoSend") return;
-    const {id, message, url} = JSON.parse(payload);
-    const frameId = frameNumber(contextToFrame.get(executionContextId) ?? mainFrameId);
-    let result = null;
-    if (message?.type === "ping") result = {pong: true};
-    else {
-      try {
-        result = await backgroundListener(message, {url, frameId, tab: {id: tabId, url: page.url()}}) ?? null;
-      } catch (error) {
-        result = null;
-      }
-      if (message?.type === "assess" || message?.type === "gate") {
-        events.push({type: message.type, frameId, kind: message.action?.kind, verdict: result?.verdict, decision: result?.decision,
-                     needScreenshot: result?.needScreenshot || undefined});
-      }
-    }
-    evaluateIn(executionContextId, "__ssoResolve(" + id + "," + JSON.stringify(JSON.stringify(result)) + ")");
-  });
-  // As in Safari: hooks in the page's own context; the content script in an isolated world.
-  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {source: pagehooks});
-  await cdp.send("Page.addScriptToEvaluateOnNewDocument", {worldName: "sso", source: `(() => {
-    const pending = new Map(); let next = 0; const listeners = [];
-    // Test only: the extension draws its banners in closed shadow roots; remember
-    // them (in this isolated world) so the harness can read and press them.
-    const attach = Element.prototype.attachShadow, sealed = [];
-    Element.prototype.attachShadow = function (options) {
-      const root = attach.call(this, options);
-      if (options?.mode === "closed") sealed.push(root);
-      return root;
-    };
-    window.__ssoNotes = () => sealed.filter(r => r.host.isConnected && r.host.getAttribute("role"))
-      .map(r => [...r.childNodes].map(n => n.textContent).join(""));
-    window.__ssoButton = label => {
-      for (const r of sealed) for (const b of r.querySelectorAll("button")) {
-        if (r.host.isConnected && b.textContent === label) {
-          const box = b.getBoundingClientRect();
-          return {x: box.x + box.width / 2, y: box.y + box.height / 2};
-        }
-      }
-      return null;
-    };
-    window.__ssoResolve = (id, json) => { const done = pending.get(id); pending.delete(id); done?.(JSON.parse(json)); };
-    window.__ssoDeliver = json => { const message = JSON.parse(json); listeners.forEach(fn => { try { fn(message); } catch {} }); };
-    window.browser = {
-      storage: {local: {get: async () => (${JSON.stringify({settings: {coverMode: "moments", skipSites: []}, seen: store.seen})})}},
-      runtime: {
-        getURL: p => "https://sso-extension.invalid/" + p,
-        onMessage: {addListener: fn => listeners.push(fn)},
-        sendMessage: message => new Promise(resolve => {
-          const id = ++next; pending.set(id, resolve);
-          __ssoSend(JSON.stringify({id, message, url: location.href}));
-        })
-      }
-    };
-  })();\n` + inspector});
+  current = {page, tabId, scenario: s};
+  // Harness option (not in SPEC): "floodTab" opens this address in a second tab
+  // first (e.g. a page that floods the model server), wired as its own tab.
+  if (s.floodTab) {
+    const floodPage = await context.newPage();
+    await wire(floodPage, tabId + 1000, []);
+    await floodPage.goto(s.floodTab, {waitUntil: "domcontentloaded", timeout: 20000}).catch(() => {});
+    await floodPage.waitForTimeout(1500);
+  }
+  const {inExtension, showing} = await wire(page, tabId, events);
 
   const started = Date.now();
   const skipped = [];

@@ -819,7 +819,10 @@
 
       const go = () => { approved.add(target); resume(); };
       if (verdict?.decision === "allow") return go();
-      if (verdict?.decision === "block") return banner("Blocked by your model. Open the extension for details.", "danger");
+      if (verdict?.decision === "block") {
+        return banner(verdict.checkFailed ? "Blocked: this page could not be checked although your model server is working."
+          : "Blocked by your model. Open the extension for details.", "danger");
+      }
       banner("Could not check this. " + (verdict?.summary || ""), "warn", go);
     }
 

@@ -1,0 +1,8 @@
+{"id": "x-fault-server", "kind": "benign",
+ "title": "Self-test: ordinary news page while the model server is unreachable",
+ "description": "Not part of the blind set. The harness's modelFault makes the server unreachable. That is not the page's doing, so the page must not be flagged.",
+ "start": "https://riverside-weekly-news.com/",
+ "modelFault": {"down": true},
+ "hosts": {"riverside-weekly-news.com": {"domainAgeDays": 5200, "certificateAgeDays": 4800}},
+ "visitsBefore": 12,
+ "victim": [{"wait": 3000}]}

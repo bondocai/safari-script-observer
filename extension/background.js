@@ -151,6 +151,7 @@ browser.tabs.onUpdated?.addListener((tabId, changeInfo) => {
 
 browser.tabs.onRemoved.addListener(tabId => {
   tabs.delete(tabId);
+  secretFrames.delete(tabId);
   browser.storage.local.remove("tab-" + tabId).catch(() => {});
   forgetBypasses(tabId).catch(() => {});
   browser.storage.local.get("lastSafe").then(({lastSafe = {}}) => {
@@ -259,26 +260,27 @@ async function attempt(label, fn) {
     return await fn();
   } catch (error) {
     log(label, "failed:", error.message);
-    return {error: error.message};
+    return {error: error.message, cause: error.cause};
   }
 }
 
 // Explanations are fetched after the decision has already been acted on.
-async function explainLater(task, input, result, image, apply) {
+async function explainLater(task, input, result, image, apply, lane) {
   const outcome = result[task.key];
   if (!task.values.includes(outcome) || result.decidedBy === "rules" || result.summary) return;
   // Only warnings and blocks get an explanation; explaining every safe page would
   // double the load on the model server for nothing.
   if (outcome === "safe" || outcome === "allow") return;
-  const details = await attempt("explanation", () => serverExplain(task, input, outcome, image));
+  const details = await attempt("explanation", () => serverExplain(task, input, outcome, image, lane));
   if (!details.error) apply(details);
 }
 
 // ---- Verdict memory -----------------------------------------------------------
 // A model verdict is reused for the same page (origin + path) when the page's
-// code fingerprint and the model are unchanged and the verdict is under a day
-// old. Any change to the page's scripts, forms, frames, or downloads, or a
-// different model, means a fresh check.
+// code fingerprint and the model are unchanged, the page still says much the same
+// thing, and the verdict is under a day old. Any change to the page's scripts,
+// forms, frames, or downloads, a different model, or wording that changed a lot
+// since the verdict (a trusted site that now shows a scam, say) means a fresh check.
 
 const verdictTtlMs = 24 * 60 * 60 * 1000;
 // Pages that ask for a password or payment details are re-checked sooner.
@@ -328,17 +330,51 @@ function modelId() {
     : settings.llm.customUrl + "/" + settings.llm.customModel);
 }
 
-async function rememberedVerdict(pageKey, fingerprint) {
+// A compact sketch of what a page says (MinHash over its words): enough to tell
+// whether two versions of a page say roughly the same thing, without storing
+// the text itself.
+const sketchSize = 32;
+const sketchSeeds = Array.from({length: sketchSize}, (_, k) => Math.imul(k + 1, 0x9e3779b9) >>> 0);
+function mix32(x) {
+  x ^= x >>> 16; x = Math.imul(x, 0x85ebca6b);
+  x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35);
+  return (x ^ (x >>> 16)) >>> 0;
+}
+function textSketch(text) {
+  const words = new Set(String(text || "").toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) || []);
+  const sketch = new Array(sketchSize).fill(0xffffffff);
+  for (const word of words) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < word.length; i++) h = Math.imul(h ^ word.charCodeAt(i), 0x01000193) >>> 0;
+    for (let k = 0; k < sketchSize; k++) {
+      const v = mix32(h ^ sketchSeeds[k]);
+      if (v < sketch[k]) sketch[k] = v;
+    }
+  }
+  return sketch;
+}
+// Roughly the share of words two versions have in common (Jaccard similarity).
+function sketchSimilarity(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return 0;
+  return a.filter((v, k) => v === b[k]).length / a.length;
+}
+const sameWordingAt = 0.5;
+
+async function rememberedVerdict(pageKey, fingerprint, sketch) {
   const {verdicts = {}} = await browser.storage.local.get("verdicts");
   const entry = verdicts[pageKey];
   if (!entry || entry.fingerprint !== fingerprint || entry.model !== modelId()) return null;
+  if (sketchSimilarity(entry.sketch, sketch) < sameWordingAt) {
+    log("wording changed since the remembered verdict:", pageKey);
+    return null;
+  }
   if (Date.now() - entry.at > (entry.secrets ? secretsVerdictTtlMs : verdictTtlMs)) return null;
   return entry;
 }
 
-async function rememberVerdict(pageKey, fingerprint, result) {
+async function rememberVerdict(pageKey, fingerprint, sketch, result) {
   const {verdicts = {}} = await browser.storage.local.get("verdicts");
-  verdicts[pageKey] = {...verdicts[pageKey], fingerprint, model: modelId(), at: Date.now(), secrets: !!result.secrets,
+  verdicts[pageKey] = {...verdicts[pageKey], fingerprint, sketch, model: modelId(), at: Date.now(), secrets: !!result.secrets,
     verdict: result.verdict, source: result.source, investigation: result.investigation,
     ...(result.summary && {summary: result.summary, reasons: result.reasons})};
   // Keep storage bounded: drop the oldest entries.
@@ -409,7 +445,25 @@ async function countVisit(tabId, origin) {
 // A frame inside a page (only frames that ask for a password or payment details
 // are sent). A malicious frame blocks the whole page: the top frame is told to
 // show the block page, and "Visit this unsafe page" applies to that page.
+// Frames asking for a password or payment details, by tab (cleared when the tab
+// opens a new page). Real pages have a few (a card form split into fields); a
+// page with many is unusual, and each would cost a model check, so frames past
+// the limit are flagged without one.
+const secretFrames = new Map();
+const maxSecretFrames = 8;
+
 async function assessFrame(tabId, signals, fpSource, context, topUrl) {
+  const frames = secretFrames.get(tabId) || new Set();
+  secretFrames.set(tabId, frames);
+  if (!frames.has(context.frameId) && frames.size >= maxSecretFrames) {
+    const result = {verdict: "suspicious", source: "Safety rule", decidedBy: "rules",
+      summary: "This page has an unusual number of frames asking for passwords or payment details.",
+      reasons: ["More than " + maxSecretFrames + " frames on this page ask for passwords or payment details."]};
+    updateTab(tabId, {frame: {...result, origin: signals.page.origin, path: signals.page.path, at: Date.now()}});
+    setBadge(tabId, result.verdict);
+    return result;
+  }
+  frames.add(context.frameId);
   let topOrigin = "";
   try { topOrigin = new URL(topUrl).origin; } catch {}
   // The page around the frame: which site, its verdict, and how often you visit it.
@@ -459,6 +513,7 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
       cameFrom.delete(tabId);
     }
     tabs.set(tabId, {});
+    secretFrames.delete(tabId);
     await countVisit(tabId, signals.page.origin).catch(e => log("visit count failed:", e));
   }
   if (!frame) {
@@ -482,6 +537,12 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
   const fingerprint = fpSource
     ? await sha256Text(fpSource + "\n" + await scriptsFingerprint(context.scriptUrls || []))
     : null;
+  const sketch = textSketch(signals.text);
+  const remember = result => rememberVerdict(pageKey, fingerprint, sketch, result).catch(e => log("remember failed:", e));
+  // Model calls for this check take turns with other tabs' (see inTurn): the
+  // page's own check goes before its frames', and a newer check of the same
+  // page or frame replaces one still waiting.
+  const lane = {tab: tabId, urgent: !frame};
 
   const record = result => {
     if (!current()) return;
@@ -495,11 +556,8 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
     explainLater(explainTask, explainInput, result, image, details => {
       const page = tabs.get(tabId)?.[slot];
       if (current() && page?.at === at) updateTab(tabId, {[slot]: {...page, ...details}});
-      if (fingerprint && result.decidedBy === "server") {
-        rememberVerdict(pageKey, fingerprint, {...result, ...details, secrets: context.asksForSecrets})
-          .catch(e => log("remember failed:", e));
-      }
-    });
+      if (fingerprint && result.decidedBy === "server") remember({...result, ...details, secrets: context.asksForSecrets});
+    }, {tab: tabId});
   };
 
   if (llmEnabled()) {
@@ -508,7 +566,7 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
     // fingerprint leaves text out, so a page rewritten by its own scripts would
     // otherwise get its old verdict back).
     const remembered = fingerprint && !context.textChanged &&
-      await rememberedVerdict(pageKey, fingerprint).catch(() => null);
+      await rememberedVerdict(pageKey, fingerprint, sketch).catch(() => null);
     if (remembered) {
       const result = {verdict: remembered.verdict, summary: remembered.summary, reasons: remembered.reasons,
         investigation: remembered.investigation,
@@ -524,7 +582,8 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
       return {needScreenshot: true};
     }
 
-    let server = await attempt("model server", () => serverDecide(tasks.assess, input, image));
+    let server = await attempt("model server",
+      () => serverDecide(tasks.assess, input, image, {...lane, replaces: "assess:" + (context.frameId || 0)}));
     if (!server.error && shouldInvestigate(server, signals, context)) {
       if (current() && !frame) updateTab(tabId, {page: {...tabs.get(tabId)?.page, verdict: "checking", ...where, investigating: true}});
       const closerLook = async first => {
@@ -533,7 +592,7 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
         explainTask = tasks.investigate;
         explainInput = {signals, investigation: facts};
         const second = await attempt("investigation verdict",
-          () => serverDecide(tasks.investigate, explainInput, image));
+          () => serverDecide(tasks.investigate, explainInput, image, lane));
         const settled = settleInvestigation(first, second, facts);
         log("investigated", signals.page.origin, "->", settled.verdict, JSON.stringify(facts).slice(0, 300));
         return settled;
@@ -545,10 +604,7 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
         const later = closerLook(server).then(async settled => {
           if (!current()) return;
           record(settled);
-          if (fingerprint) {
-            rememberVerdict(pageKey, fingerprint, {...settled, secrets: context.asksForSecrets})
-              .catch(e => log("remember failed:", e));
-          }
+          if (fingerprint) remember({...settled, secrets: context.asksForSecrets});
           if (settled.verdict !== "safe") {
             const result = await afterVerdict(tabId, context.url || signals.page.origin, settled);
             browser.tabs.sendMessage(tabId, {type: "verdict", result}, {frameId: 0}).catch(() => {});
@@ -565,13 +621,16 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
     }
     if (!server.error) {
       record(server);
-      if (fingerprint) {
-        rememberVerdict(pageKey, fingerprint, {...server, secrets: context.asksForSecrets})
-          .catch(e => log("remember failed:", e));
-      }
+      if (fingerprint) remember({...server, secrets: context.asksForSecrets});
       return server;
     }
-    const fallback = {...rulesAssess(signals), summary: "The model server could not be reached: " + server.error};
+    // The server works but couldn't answer for this page: the page's doing.
+    const fallback = await failedBecauseOfPage(server)
+      ? {verdict: "suspicious", checkFailed: true, source: "Safety rule", decidedBy: "rules",
+         summary: "This page could not be checked although your model server is working. Pages can cause " +
+           "this on purpose, so it is treated as suspicious.",
+         reasons: ["Checking this page failed: " + server.error.slice(0, 160)]}
+      : {...rulesAssess(signals), summary: "The model server could not be reached: " + server.error};
     record(fallback);
     return fallback;
   }
@@ -711,8 +770,13 @@ async function gateAction(tabId, action, signals, url, frameId = 0) {
   const image = action.kind === "submit" && url ? screenshotFor(tabId, url, 10 * 60 * 1000) : null;
   let result = null;
   if (llmEnabled()) {
-    const server = await attempt("model server", () => serverDecide(tasks.gate, request, image));
+    const server = await attempt("model server", () => serverDecide(tasks.gate, request, image, {tab: tabId, urgent: true}));
     if (!server.error) result = server;
+    else if (await failedBecauseOfPage(server)) {
+      result = {decision: "block", checkFailed: true, source: "Safety rule", decidedBy: "rules",
+        summary: "Blocked: this could not be checked although your model server is working. Pages can cause " +
+          "this on purpose, so it is not allowed."};
+    }
   }
   if (!result) result = rulesGate(request);
 
@@ -731,7 +795,7 @@ async function gateAction(tabId, action, signals, url, frameId = 0) {
     explainLater(tasks.gate, request, result, image, details => {
       const current = tabs.get(tabId)?.action;
       if (current?.at === at) updateTab(tabId, {action: {...current, ...details}});
-    });
+    }, {tab: tabId});
   }
   return result;
 }

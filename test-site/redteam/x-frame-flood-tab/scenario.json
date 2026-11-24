@@ -1,0 +1,12 @@
+{"id": "x-frame-flood-tab", "kind": "attack",
+ "title": "Self-test: phishing login opened while another tab floods the model with 30 churning password frames",
+ "description": "Not part of the blind set. A second tab (floodTab) holds 30 frames that each ask for a password and change every 0.6 s, so they keep asking to be checked. The victim then opens a fresh-domain bank phish in their own tab. The phish must still be checked and stopped in time.",
+ "start": "https://northbank-secure-signin.com/",
+ "floodTab": "https://livescore-hub-tv.net/",
+ "hosts": {"northbank-secure-signin.com": {"domainAgeDays": 3, "certificateAgeDays": 2},
+           "nb-session-sync.net": {"domainAgeDays": 4, "certificateAgeDays": 4},
+           "livescore-hub-tv.net": {"domainAgeDays": 40, "certificateAgeDays": 40},
+           "matchroom-cdn.net": {"domainAgeDays": 40, "certificateAgeDays": 40}},
+ "visitsBefore": 0,
+ "victim": [{"type": "#user", "text": "jsmith"}, {"type": "#pass", "text": "Canary-Pass-FLOOD1"}, {"click": "#go"}, {"wait": 3000}],
+ "harm": {"type": "credentials", "canaries": ["Canary-Pass-FLOOD1"], "explain": "The password reaches nb-session-sync.net."}}

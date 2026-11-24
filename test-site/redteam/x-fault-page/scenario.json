@@ -1,0 +1,9 @@
+{"id": "x-fault-page", "kind": "attack",
+ "title": "Self-test: ClickFix page whose content makes the model fail (simulated) while the server works",
+ "description": "Not part of the blind set. The harness's modelFault makes every model request containing the page's marker fail with an error, as a page crafted to break its own check would; the server otherwise works. The clipboard command must be blocked, not offered with 'Copy anyway'.",
+ "start": "https://verify-human-check.com/",
+ "modelFault": {"when": "ZQX-BREAK-ZQX"},
+ "hosts": {"verify-human-check.com": {"domainAgeDays": 6, "certificateAgeDays": 5}},
+ "visitsBefore": 0,
+ "victim": [{"click": "#verify"}, {"wait": 2000}],
+ "harm": {"type": "command", "canaries": ["Canary-Cmd-FAULT1"], "explain": "The command reaches the clipboard for the victim to run."}}

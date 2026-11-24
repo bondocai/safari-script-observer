@@ -239,6 +239,14 @@ function parseServerJson(body, url) {
   }
 }
 
+// A failed model call, with what went wrong: "network" (the server couldn't be
+// reached), "timeout" (no answer in time), "setup" (wrong address, key or model),
+// "status" (the server reported an error for this request), or "answer" (the model
+// answered with nothing usable).
+function modelError(message, cause) {
+  return new Error(message, {cause});
+}
+
 function chatUrl() {
   if (settings.llm.kind === "ollama") return settings.llm.ollamaUrl.replace(/\/+$/, "") + "/api/chat";
   const base = settings.llm.customUrl.replace(/\/+$/, "");
@@ -270,22 +278,31 @@ async function callServer(system, input, schema, maxTokens, image) {
 
   const reply = await native({type: "http", url: chatUrl(), headers, body: JSON.stringify(body),
                               timeoutMs: settings.timeoutMs});
-  if (reply?.error) throw new Error(networkProblem(reply, chatUrl()));
-  if (reply.status !== 200) throw new Error(statusProblem(reply, chatUrl()));
-  const data = parseServerJson(reply.body, chatUrl());
-  const content = (ollama ? data.message.content : data.choices[0].message.content) || "";
-  if (!content.trim()) throw new Error("The model returned no answer" +
-    (data.choices?.[0]?.finish_reason === "length" ? " (it used its whole reply length on reasoning)" : ""));
+  if (reply?.error) throw modelError(networkProblem(reply, chatUrl()), Number(reply.code) === -1001 ? "timeout" : "network");
+  if (reply.status !== 200) {
+    throw modelError(statusProblem(reply, chatUrl()), [401, 403, 404].includes(reply.status) ? "setup" : "status");
+  }
+  let data;
+  try { data = parseServerJson(reply.body, chatUrl()); } catch (error) { throw modelError(error.message, "setup"); }
+  serverAnswered();
+  const content = (ollama ? data.message?.content : data.choices?.[0]?.message?.content) || "";
+  if (!content.trim()) throw modelError("The model returned no answer" +
+    (data.choices?.[0]?.finish_reason === "length" ? " (it used its whole reply length on reasoning)" : ""), "answer");
   // Some reasoning models prepend a <think> block; keep only the JSON.
-  return {output: JSON.parse(content.replace(/<think>[\s\S]*?<\/think>/g, "").trim()), seconds: reply.seconds};
+  try {
+    return {output: JSON.parse(content.replace(/<think>[\s\S]*?<\/think>/g, "").trim()), seconds: reply.seconds};
+  } catch {
+    throw modelError("The model's answer was not valid JSON", "answer");
+  }
 }
 
-async function serverDecide(task, input, image) {
-  const {output, seconds: s} = await callServer(task.system, input, {
+// `lane` (optional): which tab the call is for, so calls take turns (see inTurn).
+async function serverDecide(task, input, image, lane) {
+  const {output, seconds: s} = await inTurn(lane, () => callServer(task.system, input, {
     type: "object", additionalProperties: false, required: [task.key],
     properties: {[task.key]: {type: "string", enum: task.values}}
-  }, 30, image);
-  if (!task.values.includes(output?.[task.key])) throw new Error("Unexpected model output");
+  }, 30, image));
+  if (!task.values.includes(output?.[task.key])) throw modelError("Unexpected model output", "answer");
   return {[task.key]: output[task.key], decidedBy: "server", withScreenshot: !!image,
           source: llmLabel() + " \u00b7 " + seconds(s) + (image ? " \u00b7 with screenshot" : "")};
 }
@@ -299,14 +316,14 @@ function shorten(text, max) {
   return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-]+$/, "") + "\u2026";
 }
 
-async function serverExplain(task, input, outcome, image) {
-  const {output, seconds: s} = await callServer(
+async function serverExplain(task, input, outcome, image, lane) {
+  const {output, seconds: s} = await inTurn(lane, () => callServer(
     task.system + " You already answered " + task.key + " = " + outcome + ". Now explain it: " +
     "reasons: up to 3 short evidence-based points; summary: one plain sentence for a non-expert user.",
     input,
     {type: "object", additionalProperties: false, required: ["reasons", "summary"],
      properties: {reasons: {type: "array", items: {type: "string"}, maxItems: 3}, summary: {type: "string"}}},
-    400, image);
+    400, image));
   return {
     reasons: (output.reasons || []).slice(0, 3).map(r => shorten(r, 240)),
     summary: shorten(output.summary, 320),
@@ -324,6 +341,87 @@ async function listServerModels(llm) {
   if (reply.status !== 200) throw new Error(statusProblem(reply, url));
   const data = parseServerJson(reply.body, url);
   return ollama ? data.models.map(m => m.name) : data.data.map(m => m.id);
+}
+
+// ---- Taking turns ----------------------------------------------------------------
+// Model calls wait in one queue per tab and are served in turn, so a page can't
+// keep the model server busy while other tabs wait (one page can ask for many
+// checks: its frames, re-checks, held actions). Urgent calls (a held action, a
+// page's own check) go before ordinary ones (checks of frames, explanations),
+// in any tab: frames churning in one tab can't delay another tab's page check. A check still waiting is
+// replaced by a newer check of the same page or frame (`replaces`) instead of
+// piling up; both callers get the newer answer. Calls without a lane (tests,
+// settings) run straight away.
+const turns = {running: 0, parallel: 2, queues: new Map(), order: []};
+
+function inTurn(lane, run) {
+  if (!lane) return run();
+  return new Promise((resolve, reject) => {
+    const key = String(lane.tab);
+    let queue = turns.queues.get(key);
+    if (!queue) {
+      queue = [];
+      turns.queues.set(key, queue);
+      turns.order.push(key);
+    }
+    const waiting = lane.replaces && queue.find(job => job.replaces === lane.replaces);
+    if (waiting) {
+      waiting.run = run;
+      waiting.callers.push({resolve, reject});
+    } else {
+      const job = {run, replaces: lane.replaces, urgent: !!lane.urgent, callers: [{resolve, reject}]};
+      const firstOrdinary = job.urgent ? queue.findIndex(j => !j.urgent) : -1;
+      if (firstOrdinary === -1) queue.push(job); else queue.splice(firstOrdinary, 0, job);
+    }
+    nextTurn();
+  });
+}
+
+function nextTurn() {
+  while (turns.running < turns.parallel && turns.order.length) {
+    let next = turns.order.findIndex(key => turns.queues.get(key)[0].urgent);
+    if (next === -1) next = 0;
+    const [key] = turns.order.splice(next, 1);
+    const queue = turns.queues.get(key);
+    const job = queue.shift();
+    if (queue.length) turns.order.push(key); else turns.queues.delete(key);
+    turns.running++;
+    Promise.resolve().then(job.run).then(
+      value => job.callers.forEach(caller => caller.resolve(value)),
+      error => job.callers.forEach(caller => caller.reject(error))
+    ).finally(() => { turns.running--; nextTurn(); });
+  }
+}
+
+// ---- Whose fault a failed check was --------------------------------------------
+// A page can be built to make its own check fail (input that makes the model
+// error, refuse, or run out of time), hoping for "could not be checked, continue
+// anyway". When the server is reachable and set up right, a failure for one page
+// is that page's doing and counts as a warning sign. When the server itself is
+// down or misconfigured, it isn't the page's fault.
+// Asked fresh each time a check fails (a server that just went down must not make
+// pages look guilty); checks failing together share one question.
+let serverHealth = {at: 0, ok: false};
+let healthQuestion = null;
+
+function serverAnswered() {
+  serverHealth = {at: Date.now(), ok: true};
+}
+
+async function serverWorking() {
+  if (Date.now() - serverHealth.at < 3000) return serverHealth.ok;
+  healthQuestion ??= listServerModels(settings.llm).then(() => true, () => false).then(ok => {
+    serverHealth = {at: Date.now(), ok};
+    healthQuestion = null;
+    return ok;
+  });
+  return healthQuestion;
+}
+
+// `failure`: what attempt() returned ({error, cause}).
+async function failedBecauseOfPage(failure) {
+  if (!failure?.error || failure.cause === "network" || failure.cause === "setup") return false;
+  return serverWorking();
 }
 
 // ---- Local rules (used only when no model is available) -------------------------

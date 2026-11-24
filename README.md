@@ -12,8 +12,10 @@ AI service.
 
 ## Results so far
 
-- **Blind red-team testing:** 76 scenarios (42 attacks, 34 legitimate look-alikes) written by
-  testers who never saw the code, over three rounds; see [`eval/RESULTS.md`](eval/RESULTS.md).
+- **Blind red-team testing:** 100 scenarios (56 attacks, 44 legitimate look-alikes) written by
+  testers who never saw the code, over four rounds, the last aimed at the AI itself (prompt
+  injection). v0.16.0 stopped 55 of 56 attacks and let 42 of 44 legitimate pages through; see
+  [`eval/RESULTS.md`](eval/RESULTS.md).
 - **Live phishing:** 6 of 6 live phishing pages that reached the extension were blocked, 4 of
   them before any other layer (browser warnings, DNS filtering, hosting takedowns) had caught them.
 - Write-up: *(link to the article)*
@@ -49,6 +51,7 @@ placeholder bundle identifier (`com.example.SafariScriptObserver`) to your own f
 | Model accuracy on described pages | `MODEL_URL=… MODEL=… API_KEY=… node eval/run.mjs` |
 | Evasion checks in a sandboxed browser (stand-in model) | `node eval/lab-check/run.mjs` |
 | Zip handling, incl. zip bombs and crafted archives | `node eval/archive-check.mjs` |
+| Model-call queue and failed-check handling | `node eval/turns-check.mjs` |
 | End-to-end red team (real model, offline lab) | `node eval/redteam/run.mjs` (scenario format: `eval/redteam/SPEC.md`) |
 | Fresh list of live phishing pages for manual testing | `node eval/phish/fresh-list.mjs` |
 
@@ -73,8 +76,9 @@ the model answers. Your **trusted sites** (Settings) open without
 waiting, but are still fingerprinted, re-checked by the model when their code
 changes, and still have downloads and password and payment submissions held.
 For trusted sites the model gets only the page's structure: never its text, and
-no screenshot. Pages checked in the last 24 hours with unchanged code are not
-sent to the model again. Suspicious pages get a warning (and their password and
+no screenshot. Pages checked in the last 24 hours with unchanged code and much
+the same wording are not sent to the model again (a trusted site that starts
+showing a scam with the same code is checked afresh). Suspicious pages get a warning (and their password and
 card fields take no typing until you choose to type); malicious pages are
 replaced by a block page.
 
@@ -117,6 +121,20 @@ obvious signs (a password form posting to another site, decoded-and-run
 scripts, hidden cross-site frames). A known-bad file signature (e.g. EICAR) is
 always blocked, whatever the model says.
 
+If the server is working but a page's own check fails or runs out of time, the
+page is treated as suspicious and its downloads and clipboard commands are
+blocked: pages can be built to make a model error, refuse or stall, hoping for
+"could not be checked, continue anyway". Whether the server is working is asked
+fresh each time (a quick request for its model list), so a server that just went
+down doesn't make pages look guilty.
+
+Model calls take turns: each tab gets its turn, a page's own check and held
+actions go before checks of frames and explanations in any tab, a check still
+waiting is replaced by a newer check of the same page or frame, and at most two
+calls run at once. A page that keeps asking to be checked (churning frames,
+constant rewrites) can't hold up other tabs. More than eight frames on one page
+asking for passwords or payment details are flagged without a model check.
+
 Model calls are made by the extension's Mac app, so Ollama and LM Studio need no
 CORS or `OLLAMA_ORIGINS` changes.
 
@@ -154,7 +172,8 @@ fetched. The investigation can raise a verdict freely, but can lower
 "suspicious" to "safe" only for a domain over a year old that is not on
 OpenPhish and sends no data to known data-theft services.
 
-Stored on this Mac only, in the extension's storage: remembered verdicts (24 h),
+Stored on this Mac only, in the extension's storage: remembered verdicts (24 h,
+with a sketch of each page's wording as numbers, not the text itself),
 "Visit this unsafe page" choices (per tab, until it closes), and per-site visit counts. **Forget remembered
 verdicts** in Settings clears all three.
 

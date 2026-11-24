@@ -1,0 +1,8 @@
+{"id": "x-sleeper-text", "kind": "attack",
+ "title": "White-box self-test: trusted garden blog turns into a tech-support scam on the return visit, code unchanged",
+ "description": "Not part of the blind set. Targets the remembered-verdict path: the first visit is an ordinary blog post (judged safe and remembered). On the return visit the same script fetches its 'feed' JSON (not part of the code fingerprint) and swaps the article text for a full-page fake Apple security alert with a phone number. No scripts, forms, frames or downloads change, so a cache keyed only on code would return the old 'safe' verdict.",
+ "start": "https://maplehollowgardens.com/posts/autumn-bulbs",
+ "hosts": {"maplehollowgardens.com": {"domainAgeDays": 4100, "certificateAgeDays": 3900}},
+ "visitsBefore": 20,
+ "victim": [{"wait": 12000}, {"goto": "https://maplehollowgardens.com/posts/autumn-bulbs"}, {"wait": 12000}],
+ "harm": {"type": "other", "canaries": [], "explain": "The victim calls the fake Apple support number and gives remote access and card details."}}
