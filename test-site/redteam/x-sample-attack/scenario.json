@@ -1,0 +1,8 @@
+{"id": "x-sample-attack", "kind": "attack", "title": "Harness sample: lookalike bank login sending to a collector",
+ "description": "Harness self-test, not part of the blind set.",
+ "start": "https://secure-northbank-verify.com/",
+ "hosts": {"secure-northbank-verify.com": {"domainAgeDays": 3, "certificateAgeDays": 2},
+           "collect-sync-api.net": {"domainAgeDays": 5, "certificateAgeDays": 5}},
+ "visitsBefore": 0,
+ "victim": [{"type": "#user", "text": "jsmith"}, {"type": "#pass", "text": "Canary-Pass-1001"}, {"click": "#go"}, {"wait": 2000}],
+ "harm": {"type": "credentials", "canaries": ["Canary-Pass-1001"], "explain": "Password reaches collect-sync-api.net."}}

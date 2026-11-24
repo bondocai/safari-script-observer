@@ -1,0 +1,53 @@
+* {
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    cursor: default;
+}
+
+:root {
+    color-scheme: light dark;
+    --ok: #1a7f37;
+    --todo: #b54708;
+    --muted: #667085;
+    --line: #d0d5dd;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root { --muted: #9aa1ab; --line: #3a3d44; }
+}
+
+body {
+    margin: 0;
+    padding: 28px 32px;
+    font: -apple-system-body;
+    font-family: -apple-system, system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.45;
+}
+
+header { display: flex; gap: 16px; align-items: center; margin-bottom: 18px; }
+h1 { font-size: 20px; margin: 0; }
+h2 { font-size: 15px; margin: 0 0 2px; }
+p { margin: 4px 0; }
+.lead, .hint, .footer { color: var(--muted); }
+.hint, .footer { font-size: 12px; }
+
+.panel {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
+    margin-top: 8px;
+}
+.panel.done { border-color: var(--ok); }
+.panel h2 { display: flex; align-items: center; gap: 10px; font-size: 16px; }
+.tick {
+    width: 20px; height: 20px; border-radius: 50%; background: var(--ok);
+    display: inline-grid; place-items: center; color: #fff; font-size: 12px; font-weight: 700;
+}
+.tick::after { content: "\2713"; }
+.next { color: var(--muted); margin-top: 12px; }
+[hidden] { display: none !important; }
+
+
+button { font-size: 1em; margin-top: 8px; cursor: pointer; }
+.footer { margin-top: 14px; }

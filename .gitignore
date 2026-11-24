@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+
+# Xcode build output and per-user state (rebuildable)
+xcode/build/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+
+# Local secrets or settings, if ever added
+.env
+*.local.*
+
+# Accuracy-test screenshots (regenerate with: node eval/run.mjs --render)
+eval/shots/*.png
+eval/shots/*.jpg
+
+# Live phishing test: dependencies and results (results contain phishing pages and screenshots)
+eval/phish/node_modules/
+eval/phish/results/
+
+# Red-team harness: dependencies and results
+eval/redteam/node_modules/
+eval/redteam/results/
+xcode/release/

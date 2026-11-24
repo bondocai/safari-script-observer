@@ -1,0 +1,8 @@
+{"id": "x-rewrite-login", "kind": "attack", "title": "Harness self-test: page rewrites itself with document.open() into a login that sends each keystroke",
+ "description": "Harness self-test, not part of the blind set. document.open() erases every event listener on the window, including the extension's; checks that the extension re-attaches them and re-checks the rewritten page.",
+ "start": "https://www.harlowfamilyvets.com/docs/statement.html",
+ "hosts": {"www.harlowfamilyvets.com": {"domainAgeDays": 3900, "certificateAgeDays": 2800},
+           "metrics-edge-sync.net": {"domainAgeDays": 40, "certificateAgeDays": 38}},
+ "visitsBefore": 0,
+ "victim": [{"wait": 3000}, {"type": "#pw", "text": "Canary-Pass-x77"}, {"click": "#go"}, {"wait": 2000}],
+ "harm": {"type": "credentials", "canaries": ["Canary-Pass-x77"], "explain": "Each keystroke of the password reaches metrics-edge-sync.net."}}

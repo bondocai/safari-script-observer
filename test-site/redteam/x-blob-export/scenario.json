@@ -1,0 +1,7 @@
+{"id": "x-blob-export", "kind": "benign", "title": "Harness self-test: retirement plan exports a spreadsheet built in the page; the link is freed at once",
+ "description": "Harness self-test, not part of the blind set. Export libraries build a file, click a temporary blob: link and revoke it immediately.",
+ "start": "https://www.examplerp.com/",
+ "hosts": {"www.examplerp.com": {"domainAgeDays": 6200, "certificateAgeDays": 4100}},
+ "visitsBefore": 40,
+ "victim": [{"wait": 1500}, {"click": "#export"}, {"wait": 3000}],
+ "expect": {"type": "download", "canaries": []}}

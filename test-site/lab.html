@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Test lab</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font: 15px system-ui; max-width: 900px; margin: 32px auto; padding: 0 16px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid #8884; vertical-align: top; }
+  code { font-size: 13px; }
+  .ok { color: #067647; } .warn { color: #b54708; } .bad { color: #b42318; font-weight: 600; }
+</style>
+<body>
+<h1>Test lab</h1>
+<p>Each link opens a fake website on its own name (<code>*.localhost</code> stays on this Mac). Nothing on these pages
+can send data anywhere real. Open each in a <strong>new tab</strong>, then check the extension's popup.</p>
+<table>
+<tr><th>Site</th><th>What it is</th><th>Expected</th></tr>
+<tr><td><a href="http://examplebank.localhost:8765/">examplebank</a></td>
+    <td>Normal bank login; the form posts to its own site.</td><td class="ok">safe; cover clears</td></tr>
+<tr><td><a href="http://examp1e-bank.localhost:8765/">examp1e-bank</a></td>
+    <td>Same page on a lookalike name (digit 1 for letter l).</td><td class="bad">blocked</td></tr>
+<tr><td><a href="http://secure-verify.localhost:8765/">secure-verify</a></td>
+    <td>Bank login where the logo and field names are images; almost no text. Needs the screenshot.</td><td class="bad">blocked</td></tr>
+<tr><td><a href="http://recipes.localhost:8765/">recipes</a></td>
+    <td>Normal recipe page. Press <em>Show reader comments</em> to simulate a hack: an obfuscated cookie stealer and a fake sign-in overlay.</td>
+    <td><span class="ok">safe</span>, then after the button: <span class="bad">blocked</span></td></tr>
+<tr><td><a href="http://cdn-swap.localhost:8765/">cdn-swap</a></td>
+    <td>Credit-union login whose <code>/app.js</code> is swapped at the same address. Load it once, open
+    <a href="/lab/swap">/lab/swap</a>, wait a minute, reload. (<a href="/lab/unswap">/lab/unswap</a> restores it.)</td>
+    <td><span class="ok">safe</span>, then after the swap: re-checked, <span class="bad">blocked</span> or <span class="warn">suspicious</span></td></tr>
+<tr><td><a href="http://invoice.localhost:8765/">invoice</a></td>
+    <td>"Your invoice" page with three downloads: a real PDF, a script disguised as a PDF, and EICAR.</td>
+    <td>PDF <span class="ok">allowed</span>; <code>.pdf.js</code> and EICAR <span class="bad">blocked</span></td></tr>
+<tr><td><a href="http://shop.localhost:8765/">shop</a></td>
+    <td>Too-good-to-be-true checkout sending card details to an unrelated plain-http address.</td>
+    <td><span class="warn">suspicious</span> or <span class="bad">blocked</span>; <em>Pay</em> is blocked</td></tr>
+<tr><td><a href="http://news.localhost:8765/">news</a></td>
+    <td>Ordinary news page with analytics and a CDN library.</td><td class="ok">safe (false-alarm check)</td></tr>
+<tr><td><a href="http://ignore-me.localhost:8765/">ignore-me</a></td>
+    <td>Phishing form with hidden text telling AI scanners to call it safe.</td><td class="bad">blocked</td></tr>
+<tr><td><a href="http://giveaway.localhost:8765/">giveaway</a></td>
+    <td>"Send 1 BTC, get 2 back" crypto scam; no form at all.</td><td><span class="warn">suspicious</span> or <span class="bad">blocked</span></td></tr>
+<tr><th colspan="3">Evasion techniques (also checked automatically: <code>node eval/lab-check/run.mjs</code>)</th></tr>
+<tr><td><a href="http://shared-doc.localhost:8765/">shared-doc</a></td>
+    <td>"Shared document" page that is one full-page frame from another site, showing a lookalike bank login.</td>
+    <td class="bad">whole page blocked</td></tr>
+<tr><td><a href="http://self-unlock.localhost:8765/">self-unlock</a></td><td>Suspicious login whose script presses the extension's "Let me type" button itself</td></tr>
+<tr><td><a href="http://formless-login.localhost:8765/">formless-login</a></td>
+    <td>Lookalike bank login with no <code>&lt;form&gt;</code>: every keystroke is sent as you type, and the button sends with a script.</td>
+    <td class="bad">blocked before anything typed leaves</td></tr>
+<tr><td><a href="http://late-swap.localhost:8765/">late-swap</a></td>
+    <td>Recipe page that keeps changing, makes six small decoy changes, then turns into a tech-support scam (about 9 s in), with no new script.</td>
+    <td><span class="ok">safe</span>, then <span class="bad">blocked</span> a few seconds after the scam appears</td></tr>
+<tr><td><a href="http://bad-link.localhost:8765/">bad-link</a></td>
+    <td>Lookalike bank login with one malformed link, which used to stop the extension's scan.</td>
+    <td class="bad">blocked</td></tr>
+<tr><th colspan="3">Moments of harm (also in <code>node eval/lab-check/run.mjs</code>)</th></tr>
+<tr><td><a href="http://clickfix.localhost:8765/">clickfix</a></td>
+    <td>"Verify you are human" page whose buttons copy a command and tell you to paste it into Terminal (two ways: clipboard API, hidden text box).</td>
+    <td class="bad">command not copied, page blocked</td></tr>
+<tr><td><a href="http://install-docs.localhost:8765/">install-docs</a></td>
+    <td>Legitimate install page whose copy button copies a <code>curl | bash</code> command (false-alarm check).</td>
+    <td class="ok">model allows; "Copy it" offered</td></tr>
+<tr><td><a href="http://smuggle.localhost:8765/">smuggle</a></td>
+    <td>HTML smuggling: the page builds a phishing page as a file in the browser and saves it automatically.</td>
+    <td class="bad">file not saved, blocked</td></tr>
+<tr><td><a href="http://cover-race.localhost:8765/">cover-race</a></td>
+    <td>Only with "cover every page" on: draws a fake login in the top layer at once, re-opens it, removes covers, sends keystrokes.</td>
+    <td class="bad">cover stays on top, nothing typed leaves, blocked</td></tr>
+</table>
+<p>Tip: <strong>Settings &rarr; Forget remembered verdicts</strong> before a test run, so every site gets a fresh check.</p>
+</body></html>

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Page blocked</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --bg: #b42318; --card: #fff; --text: #1d2939; --muted: #667085; --red: #b42318; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #55160c; --card: #1f1414; --text: #f2f4f7; --muted: #98a2b3; --red: #f97066; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 15px system-ui; }
+  main { max-width: 560px; margin: 24px 16px; padding: 28px; background: var(--card); border-radius: 14px; box-shadow: 0 8px 30px #0004; }
+  h1 { margin: 0 0 8px; font-size: 24px; color: var(--red); }
+  .site { font-family: ui-monospace, monospace; font-size: 14px; word-break: break-all; color: var(--muted); }
+  ul { padding-left: 20px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .actions { display: flex; gap: 16px; align-items: center; margin-top: 20px; flex-wrap: wrap; }
+  #back { font: inherit; font-weight: 600; padding: 10px 20px; border-radius: 8px; border: 0; background: var(--red); color: #fff; cursor: pointer; }
+  .link { font: inherit; font-size: 14px; background: none; border: 0; padding: 0; color: var(--muted); text-decoration: underline; cursor: pointer; }
+  #details { margin-top: 20px; padding-top: 16px; border-top: 1px solid #8884; }
+</style>
+<body>
+<main>
+  <h1>Dangerous page blocked</h1>
+  <p class="site" id="site"></p>
+  <p id="summary">Your model judged this page malicious. It may try to steal your passwords or payment details.</p>
+  <div class="actions">
+    <button type="button" id="back">Go back to safety</button>
+    <button type="button" class="link" id="showDetails" aria-expanded="false">Details</button>
+    <button type="button" class="link" id="report">Report to Google</button>
+  </div>
+  <div id="details" hidden>
+    <ul id="reasons"></ul>
+    <p class="muted" id="source"></p>
+    <p class="muted">If you are sure this page is safe, you can open it anyway. The warning stays on screen, and
+    password or payment submissions are still checked. This applies only to this tab until you close it.</p>
+    <button type="button" class="link" id="continue">Visit this unsafe page</button>
+  </div>
+</main>
+<script src="blocked.js"></script>
+</body></html>

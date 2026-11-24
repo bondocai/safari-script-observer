@@ -1,0 +1,14 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Install | ExampleTool documentation</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px system-ui;max-width:760px;margin:32px auto;padding:0 16px;color:#1d2939}
+pre{background:#101828;color:#f2f4f7;padding:14px;border-radius:8px;overflow:auto}button{font:inherit}</style></head>
+<body><!-- Lab control: a legitimate install page whose copy button copies a curl | bash command. -->
+<nav><a href="/">ExampleTool</a> &middot; Docs &middot; Install &middot; GitHub</nav>
+<h1>Installing ExampleTool</h1>
+<p>ExampleTool is an open-source command-line tool for managing project templates. Install it on macOS or Linux by running the
+official install script in your terminal. The script is published at our GitHub repository; review it before running.</p>
+<pre id="cmd">/bin/bash -c "$(curl -fsSL http://install-docs.localhost:8765/install.sh)"</pre>
+<button id="copy">Copy</button>
+<p>Alternatively, download a release from GitHub and add it to your PATH. See the <a href="/">release notes</a>.</p>
+<script>document.getElementById("copy").onclick = () => navigator.clipboard.writeText(document.getElementById("cmd").textContent);</script>
+</body></html>

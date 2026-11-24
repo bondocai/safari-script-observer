@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up Safari Script Observer</title>
+<style>
+  :root { color-scheme: light dark; --ok: #1a7f37; --todo: #b54708; --muted: #667085; --card: #fff; --line: #e4e7ec; --bg: #f5f6f8; }
+  @media (prefers-color-scheme: dark) { :root { --card: #1f2125; --line: #33363c; --bg: #141518; --muted: #9aa1ab; } }
+  body { margin: 0; background: var(--bg); font: 15px/1.5 -apple-system, system-ui, sans-serif; }
+  main { max-width: 620px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  .lead { color: var(--muted); margin: 0 0 24px; }
+  .step { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 12px; display: grid; grid-template-columns: 28px 1fr; gap: 4px 12px; }
+  .mark { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); margin-top: 2px; box-sizing: border-box; display: grid; place-items: center; font-size: 13px; font-weight: 700; color: #fff; }
+  .step.done .mark { background: var(--ok); border-color: var(--ok); }
+  .step.done .mark::after { content: "\2713"; }
+  .step.todo .mark { border-color: var(--todo); }
+  h2 { font-size: 16px; margin: 0; }
+  .body { grid-column: 2; color: var(--muted); }
+  .body p { margin: 4px 0; }
+  .status { font-weight: 600; }
+  .step.done .status { color: var(--ok); }
+  .step.todo .status { color: var(--todo); }
+  button { font: inherit; padding: 6px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); margin: 8px 8px 0 0; }
+  button.primary { background: #0b62d6; border-color: #0b62d6; color: #fff; }
+  .final { margin-top: 20px; padding: 14px 18px; border-radius: 12px; background: color-mix(in srgb, var(--ok) 14%, transparent); display: none; }
+  .final.show { display: block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Set up Safari Script Observer</h1>
+  <p class="lead">Two things to finish, then it protects every page you visit. Page contents go only to the model server you choose.</p>
+
+  <section class="step done" id="step-on">
+    <span class="mark"></span><h2>The extension is on</h2>
+    <div class="body"><p>You turned it on in Safari's settings.</p></div>
+  </section>
+
+  <section class="step" id="step-access">
+    <span class="mark"></span><h2>Let it check every website</h2>
+    <div class="body">
+      <p class="status" id="access-status">Checking&hellip;</p>
+      <p id="access-help">It needs to see each page to protect it. Safari will ask once: choose
+        <b>Always Allow on Every Website</b>.</p>
+      <button class="primary" id="grant">Allow on every website</button>
+      <p id="access-fallback" hidden>No prompt? In Safari: <b>Settings &rsaquo; Websites &rsaquo; Safari Script Observer</b>,
+        then set <b>When visiting other websites</b> to <b>Allow</b>.</p>
+    </div>
+  </section>
+
+  <section class="step" id="step-model">
+    <span class="mark"></span><h2>Connect your model</h2>
+    <div class="body">
+      <p class="status" id="model-status">Checking&hellip;</p>
+      <p id="model-detail"></p>
+      <button class="primary" id="test">Test connection</button>
+      <button id="settings">Open settings</button>
+    </div>
+  </section>
+
+  <section class="step" id="step-private">
+    <span class="mark" style="border-style:dashed"></span><h2>Optional: Private Browsing</h2>
+    <div class="body"><p>Private windows aren't protected unless you allow it: Safari <b>Settings &rsaquo; Extensions &rsaquo;
+      Safari Script Observer &rsaquo; Allow in Private Browsing</b>. The extension keeps a short local record of sites it
+      checked, private ones included.</p></div>
+  </section>
+
+  <div class="final" id="final"><b>You're set.</b> Pages open normally and are checked in the background; typing passwords,
+    downloads and copied commands wait briefly while your model decides. The toolbar icon shows what it found.</div>
+</main>
+<script src="welcome.js"></script>
+</body>
+</html>

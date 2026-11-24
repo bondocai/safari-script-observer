@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Safari Observer Test</title>
+<body style="font: 16px system-ui; max-width: 640px; margin: 60px auto">
+<h1>Safari Observer Test</h1>
+<p>Your model rates each page when it loads, and decides whether downloads and
+password submissions may go ahead. Open the extension pop-up to see its verdict.</p>
+
+<h2>Test pages</h2>
+<ul>
+  <li><a href="/phish">Phishing page</a> (fake bank, credentials posted to another site)</li>
+  <li><a href="/script">Malicious script page</a> (obfuscated eval, hidden iframe, miner settings)</li>
+</ul>
+
+<h2>Sign-in form changes</h2>
+<form action="/login">
+  <input type="password" disabled aria-label="Disabled demo field">
+</form>
+<button id="routine">Routine page request</button>
+<button id="expected">Expected identity-provider handoff</button>
+<button id="unexpected">Unexpected destination change</button>
+<p id="result" role="status"></p>
+
+<h2>Downloads</h2>
+<p><a href="/download/notes.txt" download>Download a clean text file</a></p>
+<p><a href="/download/eicar.com" download>Download the EICAR test file</a></p>
+<p><small>EICAR is a harmless industry-standard string that antivirus tools detect on purpose.</small></p>
+
+<script src="/demo.js"></script>
+</body></html>

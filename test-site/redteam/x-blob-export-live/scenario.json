@@ -1,0 +1,29 @@
+{
+ "id": "x-blob-export-live",
+ "kind": "benign",
+ "title": "Harness self-test: export on a page that keeps updating itself (re-checks running)",
+ "description": "Harness self-test, not part of the blind set. Export libraries build a file, click a temporary blob: link and revoke it immediately.",
+ "start": "https://www.examplerp-live.com/",
+ "hosts": {
+  "www.examplerp-live.com": {
+   "domainAgeDays": 6200,
+   "certificateAgeDays": 4100
+  }
+ },
+ "visitsBefore": 40,
+ "victim": [
+  {
+   "wait": 9000
+  },
+  {
+   "click": "#export"
+  },
+  {
+   "wait": 3000
+  }
+ ],
+ "expect": {
+  "type": "download",
+  "canaries": []
+ }
+}

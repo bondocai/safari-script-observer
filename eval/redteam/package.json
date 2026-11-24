@@ -1,0 +1,7 @@
+{
+  "name": "safari-script-observer-redteam",
+  "private": true,
+  "type": "module",
+  "description": "Blind red-team test harness; see run.mjs and SPEC.md",
+  "dependencies": {"playwright": "1.57.0"}
+}

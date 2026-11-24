@@ -1,0 +1,7 @@
+{
+  "name": "safari-script-observer-phish-test",
+  "private": true,
+  "type": "module",
+  "description": "Live phishing test for the extension; see run.mjs",
+  "dependencies": {"linkedom": "^0.18.12"}
+}

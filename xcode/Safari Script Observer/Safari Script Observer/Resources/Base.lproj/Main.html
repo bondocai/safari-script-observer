@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <link rel="stylesheet" href="../Style.css">
+    <script src="../Script.js" defer></script>
+</head>
+<body>
+    <header>
+        <img src="../Icon.png" width="64" height="64" alt="">
+        <div>
+            <h1>Safari Script Observer</h1>
+            <p class="lead">Protects you from phishing and scam pages, using your own AI model.</p>
+        </div>
+    </header>
+
+    <!-- The app's only job: get the extension turned on. The rest of setup
+         happens on the extension's own page in Safari, which can check it. -->
+    <section class="panel" id="off">
+        <h2>Turn it on in Safari</h2>
+        <p>Click the button, then tick <b>Safari Script Observer</b> in the list.
+           This window then closes and Safari walks you through the rest.</p>
+        <button class="primary" id="open-settings">Open Safari Extensions Settings</button>
+    </section>
+
+    <section class="panel done" id="handover" hidden>
+        <h2><span class="tick"></span>It's on. Continuing in Safari&hellip;</h2>
+        <p>Safari is opening the last setup steps in a new tab.</p>
+    </section>
+
+    <section class="panel done" id="on" hidden>
+        <h2><span class="tick"></span>Safari Script Observer is on.</h2>
+        <p>Its settings and setup are in Safari: click its icon in Safari's toolbar.</p>
+        <button class="primary" id="quit">Done</button>
+    </section>
+
+    <p class="footer" id="unknown" hidden>Couldn't read the extension's state from Safari. Open Safari's
+        Extensions settings and check that Safari Script Observer is ticked.</p>
+</body>
+</html>

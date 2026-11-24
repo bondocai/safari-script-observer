@@ -1,0 +1,7 @@
+{"id": "x-sample-benign", "kind": "benign", "title": "Harness sample: install docs with a copy button",
+ "description": "Harness self-test, not part of the blind set.",
+ "start": "https://docs.devtoolkit.io/install",
+ "hosts": {"docs.devtoolkit.io": {"domainAgeDays": 2900, "certificateAgeDays": 2800}},
+ "visitsBefore": 3,
+ "victim": [{"click": "#copy"}, {"wait": 1000}],
+ "expect": {"type": "command", "canaries": ["get.devtoolkit.io"]}}

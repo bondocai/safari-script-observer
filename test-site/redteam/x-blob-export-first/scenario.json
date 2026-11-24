@@ -1,0 +1,27 @@
+{
+ "id": "x-blob-export-first",
+ "kind": "benign",
+ "title": "Harness self-test: same export, first visit, clicked before the page check finishes",
+ "description": "Harness self-test, not part of the blind set. Export libraries build a file, click a temporary blob: link and revoke it immediately.",
+ "start": "https://www.examplerp-first.com/",
+ "hosts": {
+  "www.examplerp-first.com": {
+   "domainAgeDays": 6200,
+   "certificateAgeDays": 4100
+  }
+ },
+ "visitsBefore": 0,
+ "victim": [
+  {
+   "click": "#export"
+  },
+  {
+   "wait": 3000
+  }
+ ],
+ "expect": {
+  "type": "download",
+  "canaries": []
+ },
+ "actEarly": true
+}

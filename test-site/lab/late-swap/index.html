@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Lemon Garlic Pasta | Sunday Supper</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:17px Georgia,serif;max-width:680px;margin:32px auto;padding:0 16px;color:#222}
+#scam{position:fixed;inset:0;background:#0a3d91;color:#fff;font:20px system-ui;padding:60px;text-align:center}</style></head>
+<body><h1>Lemon Garlic Pasta</h1><p>Serves 4. Ready in 20 minutes. <span id="tick"></span></p>
+<p>Boil spaghetti in salted water. Warm olive oil with sliced garlic, add lemon zest, juice and parmesan, then toss.</p>
+<form action="/search" method="get"><input name="q" placeholder="Search recipes"></form>
+<!-- Lab: the page keeps changing (so the extension's re-check keeps being postponed), makes six small
+     structural changes (using up the extension's re-check limit), then, with no new script, turns into a
+     tech-support scam with a brand logo and no form at all. -->
+<script>
+let n = 0;
+setInterval(() => { document.getElementById("tick").textContent = "Views: " + (1200 + n++); }, 400);
+for (let i = 1; i <= 6; i++) setTimeout(() => {
+  const extra = document.createElement("input");
+  extra.type = "hidden"; extra.name = "ref" + i; extra.value = i;
+  document.forms[0].append(extra);
+}, i * 900);
+setTimeout(() => {
+  const scam = document.createElement("div");
+  scam.id = "scam";
+  scam.innerHTML = '<img src="logo.svg" alt="MacCare Support" width="72" height="72"><h1>Your Mac is infected</h1>' +
+    '<p>Security alert: 5 viruses found. Your account, photos and bank details are being stolen.</p>' +
+    '<p>Do not restart or close this window. Call MacCare Support now: <b>1-888-555-0199</b></p>';
+  document.body.append(scam);
+  document.title = "Security Alert - MacCare Support";
+}, 9000);
+</script></body></html>

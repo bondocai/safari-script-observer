@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Safari Script Observer Settings</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; --muted: #667085; --ok: #067647; --bad: #b42318; --line: #8884; }
+  body { font: 14px system-ui; max-width: 620px; margin: 32px auto; padding: 0 16px; }
+  h1 { font-size: 20px; }
+  fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
+  legend { font-weight: 600; padding: 0 6px; }
+  label { display: block; margin: 8px 0; }
+  input[type=text], input[type=password], input[type=url], select { width: 100%; box-sizing: border-box; padding: 6px; font: inherit; }
+  .hint { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
+  .indent { margin-left: 24px; }
+  .row { display: flex; gap: 8px; align-items: end; }
+  .row > :first-child { flex: 1; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  button { font: inherit; padding: 6px 12px; }
+  #saved { margin-left: 8px; }
+</style>
+<body>
+<h1>Safari Script Observer</h1>
+<p class="hint">Choose the model that judges pages and decides whether downloads and password submissions may go ahead.
+Form values, cookies, and passwords are never sent to any model.</p>
+
+<fieldset>
+  <legend>Model server</legend>
+  <label><input type="radio" name="kind" value="none"> None</label>
+  <label><input type="radio" name="kind" value="ollama"> Local Ollama</label>
+  <div class="indent" data-kind="ollama">
+    <label>Ollama address<input type="url" id="ollamaUrl" placeholder="http://localhost:11434"></label>
+    <div class="row">
+      <label>Model<select id="ollamaModel"></select></label>
+      <button type="button" data-load="ollama">Load models</button>
+    </div>
+  </div>
+  <label><input type="radio" name="kind" value="custom"> My own server (OpenAI-compatible: LM Studio, llama.cpp, vLLM…)</label>
+  <div class="indent" data-kind="custom">
+    <label>Server address<input type="url" id="customUrl" placeholder="http://192.168.1.20:1234/v1"></label>
+    <label>API key (optional)<input type="password" id="apiKey" autocomplete="off"></label>
+    <div class="row">
+      <label>Model<input type="text" id="customModel" list="customModels" placeholder="model id"></label>
+      <button type="button" data-load="custom">Load models</button>
+    </div>
+    <datalist id="customModels"></datalist>
+    <p class="hint">The API key is stored in this extension's local storage on this Mac.</p>
+  </div>
+  <p class="hint" id="loadStatus"></p>
+
+  <p class="hint">The model server judges every page and decides whether downloads and password
+  submissions may go ahead. With no server, or if it cannot be reached, only simple local rules are used, and password, card and recovery-phrase fields stay locked until you choose to type.</p>
+</fieldset>
+
+<fieldset>
+  <legend>Checking pages</legend>
+  <label><input type="radio" name="coverMode" value="moments"> Open pages right away and check them in the background; hold the moments that matter: typing passwords or card details, downloads, and commands copied to the clipboard (recommended)</label>
+  <label><input type="radio" name="coverMode" value="all"> Also cover every page until your model says it is clean (slower)</label>
+  <p class="hint">Pages that are not held are still checked in the background and blocked if malicious. Downloads and
+  password submissions are always held. Pages checked in the last 24 hours with unchanged code open almost instantly.</p>
+</fieldset>
+
+<fieldset>
+  <legend>Trusted sites</legend>
+  <label>Sites that open without waiting, one per line
+  <textarea id="skipSites" rows="5" placeholder="mybank.com&#10;mail.google.com&#10;intranet.example.com"
+    style="width:100%;box-sizing:border-box;padding:6px;font:13px ui-monospace,monospace"></textarea></label>
+  <p class="hint">A domain also covers its subdomains (<code>mybank.com</code> includes <code>www.mybank.com</code>).
+  Trusted sites open immediately, without the "Checking this page" cover. They are still watched: if their code
+  changes (for example after a hack), your model checks them again and can still block them, and downloads,
+  password and payment submissions on them are still held. Your model only sees their structure (forms, scripts,
+  frames), never their text, and no screenshots are taken. Add your bank here.</p>
+</fieldset>
+
+<fieldset>
+  <legend>Investigation</legend>
+  <label><input type="checkbox" id="investigate"> Take a closer look at suspicious sites</label>
+  <p class="hint">When your model finds a page suspicious, or a site you have never visited asks for a password or
+  payment details, the extension also checks how old the domain is, when its certificate was first issued, the site's
+  home page, where its forms send data, and the public OpenPhish phishing list. This sends the domain name to public
+  registration and certificate records (rdap.org, crt.sh) and fetches the site's home page without cookies. The
+  OpenPhish list is downloaded and checked on this Mac. Adds a few seconds to those pages.</p>
+</fieldset>
+
+<fieldset>
+  <legend>Screenshots</legend>
+  <label><input type="checkbox" id="screenshots"> Send a screenshot of pages that ask for a password or payment details</label>
+  <p class="hint">Lets a vision-capable model see logos and text drawn as images, which catches fake login pages that
+  text alone misses. The screenshot shows whatever is on screen, goes only to your model server, and is kept in memory
+  for at most 10 minutes. Your model server may log it. Other pages never get a screenshot.</p>
+</fieldset>
+
+<p><button type="button" id="save">Save</button><button type="button" id="test">Test models</button><span id="saved"></span></p>
+<fieldset>
+  <legend>Remembered verdicts</legend>
+  <p class="hint">A page is checked again only when its code changes, you switch models, or the last check is
+  more than 24 hours old. "Visit this unsafe page" on the block page applies only to that tab, until you close it.</p>
+  <button type="button" id="forget">Forget remembered verdicts</button> <span class="hint" id="forgotten"></span>
+</fieldset>
+<p class="hint" id="testResult"></p>
+<script src="models.js"></script>
+<script src="options.js"></script>
+</body></html>
