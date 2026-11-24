@@ -20,9 +20,20 @@ AI service.
 
 ## Install
 
-**Download** (macOS, Safari): the notarized app from [Releases](../../releases), if published.
-Unzip, move **Safari Script Observer.app** to Applications, open it once, and follow the steps:
-turn the extension on in Safari's settings, allow it on every website, and connect your model.
+1. **Download** `Safari-Script-Observer-<version>.zip` from [Releases](../../releases/latest) and unzip it.
+2. **Drag Safari Script Observer.app into Applications**, and open it once (it registers the
+   extension with Safari).
+3. **Turn it on:** Safari → Settings → **Extensions** → tick **Safari Script Observer**.
+4. **Let it check every website:** when Safari asks, choose **Always Allow on Every Website**.
+   A setup page in Safari walks you through this.
+5. **Connect your model:** click the extension's toolbar icon → **Settings**, then:
+   - choose **Local Ollama** (e.g. `http://localhost:11434`) or **My own server** for LM Studio
+     and other OpenAI-compatible servers (e.g. `http://localhost:1234/v1`, or your GPU
+     machine's address);
+   - add an **API key** if your server requires one;
+   - click **Load models**, pick a model, and click **Test models**.
+
+That's it. Pages open normally, and the toolbar icon shows what your model found.
 
 **Build it yourself:** see [Run it](#run-it) below. For a notarized build with your own Apple
 Developer account, see `scripts/release-app.sh` (set `TEAM` to your team ID). Change the
