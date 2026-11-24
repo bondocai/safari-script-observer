@@ -152,6 +152,7 @@ browser.tabs.onUpdated?.addListener((tabId, changeInfo) => {
 browser.tabs.onRemoved.addListener(tabId => {
   tabs.delete(tabId);
   secretFrames.delete(tabId);
+  screenshots.delete(tabId);
   browser.storage.local.remove("tab-" + tabId).catch(() => {});
   forgetBypasses(tabId).catch(() => {});
   browser.storage.local.get("lastSafe").then(({lastSafe = {}}) => {
@@ -388,7 +389,7 @@ async function rememberVerdict(pageKey, fingerprint, sketch, result) {
 
 // ---- Screenshots -----------------------------------------------------------------
 // Taken only for pages that ask for a password or payment details (and only if
-// enabled in Settings), kept in memory for a minute, and sent only to the
+// enabled in Settings), kept in memory for at most 10 minutes, and sent only to the
 // user's own model server.
 
 const screenshots = new Map();
@@ -399,7 +400,14 @@ async function captureTab(tab, url) {
   // captureVisibleTab captures whatever tab is in front, so only capture ours.
   if (!current.active) return {ok: false, reason: "tab not in front"};
   const raw = await browser.tabs.captureVisibleTab(current.windowId, {format: "png"});
+  // The user may have switched tabs, or the page navigated, while the capture was
+  // taken: then the picture may show another page, so it is thrown away.
+  const after = await browser.tabs.get(tab.id).catch(() => null);
+  if (!after?.active || after.windowId !== current.windowId || after.url !== current.url) {
+    return {ok: false, reason: "tab changed during capture"};
+  }
   screenshots.set(tab.id, {url: url.split("#")[0], dataUrl: await shrink(raw, 1024), at: Date.now()});
+  forgetOldScreenshots();
   log("screenshot taken for", url);
   return {ok: true};
 }
@@ -418,7 +426,16 @@ async function shrink(dataUrl, maxWidth) {
   return canvas.toDataURL("image/jpeg", 0.75);
 }
 
+// No screenshot is kept longer than it can be used (10 minutes), or after its tab closes.
+const screenshotLifetimeMs = 10 * 60 * 1000;
+function forgetOldScreenshots() {
+  for (const [tabId, shot] of screenshots) if (Date.now() - shot.at >= screenshotLifetimeMs) screenshots.delete(tabId);
+}
+// (unref: in the Node test harnesses this timer must not keep the process alive.)
+setInterval(forgetOldScreenshots, 60 * 1000)?.unref?.();
+
 function screenshotFor(tabId, url, maxAgeMs = 60000) {
+  forgetOldScreenshots();
   const shot = screenshots.get(tabId);
   return shot && shot.url === url.split("#")[0] && Date.now() - shot.at < maxAgeMs ? shot.dataUrl : null;
 }
@@ -767,7 +784,7 @@ async function gateAction(tabId, action, signals, url, frameId = 0) {
 
   // The model server decides; local rules only if it is not set up or not reachable.
   // A password or payment submission reuses the page's screenshot (if one was taken in the last 10 minutes).
-  const image = action.kind === "submit" && url ? screenshotFor(tabId, url, 10 * 60 * 1000) : null;
+  const image = action.kind === "submit" && url ? screenshotFor(tabId, url, screenshotLifetimeMs) : null;
   let result = null;
   if (llmEnabled()) {
     const server = await attempt("model server", () => serverDecide(tasks.gate, request, image, {tab: tabId, urgent: true}));

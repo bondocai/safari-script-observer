@@ -104,7 +104,9 @@ with `node scripts/update-psl.mjs`), so a user site on shared hosting such as
 `something.pages.dev` is never credited with the platform's age.
 
 The download scanner never fetches private or local network addresses (your
-router, other devices, Tailscale names), except the local test site.
+router, other devices, Tailscale names), except the local test site. The investigation's
+lookups likewise reach only public internet addresses: names that resolve to a
+private address, and redirects to one, are refused by the Mac app.
 
 ## How it decides
 
@@ -205,6 +207,9 @@ verdicts** in Settings clears all three.
 | Download `eicar.com` | blocked |
 
 ## Known limits
+
+The full picture (who the adversaries are, what each can try, what stops it, what
+leaves the Mac) is in [THREAT-MODEL.md](THREAT-MODEL.md).
 
 - Pages built to mislead the model can fool it; some protections deliberately don't depend
   on the model for that reason.

@@ -12,6 +12,7 @@ committed.
 | Lab check | `node eval/lab-check/run.mjs` (`ONLY=`, `VERBOSE=1`) | Evasion paths in a sandboxed browser with a stand-in model |
 | Archive check | `node eval/archive-check.mjs` (`--online` adds eicar.org files) | Zip reading, signatures inside archives, hostile archives |
 | Turns check | `node eval/turns-check.mjs` | Model-call queue (tabs take turns, urgent first, waiting checks replaced) and whose fault a failed check is |
+| Native check | `eval/native-check/run.sh` | The Mac app's HTTP code: investigation reaches only public addresses (names, redirects), 2 MB cap, slow servers cut off |
 | Red team | `MODEL_URL=… MODEL=… API_KEY=… node eval/redteam/run.mjs --only '^[a-h]'` | End to end: real extension code, real model, Chromium, offline lab |
 
 Red-team scenarios are written by agents that never see the extension or each
@@ -40,6 +41,16 @@ options: `actEarly`, `floodTab` (a second tab opened first), `modelFault`
 
 Both miss e14. Single runs: borderline scenarios (e.g. d06) flip between runs.
 Raw run output: `eval/redteam/results/model-comparison-2026-11-23/`.
+
+## 2026-11-24 · v0.16.1: review fixes
+
+From outside reviews of the code (ChatGPT, Gemini): the investigation's lookups could
+be pointed at this Mac or the home network by a redirect or by a name resolving to a
+private address (form destinations were already checked by name only); a screenshot
+could be stored under the wrong page if the tab changed during capture; screenshots
+stayed in memory longer than the README said. Fixed. Native check 11/11 (new); lab
+check 21/21; archive 15/15; turns 11/11; screenshot red-team scenarios (a07, b01, b03,
+c07, g08, x-fault) unchanged. Added THREAT-MODEL.md.
 
 ## 2026-11-24 · v0.16.0: cloaking, flooding and failed checks
 

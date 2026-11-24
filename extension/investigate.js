@@ -52,7 +52,9 @@ const browserHeaders = {
 };
 
 async function nativeGet(url, timeoutMs, headers = {}) {
-  const reply = await native({type: "http", method: "GET", url, headers, timeoutMs});
+  // publicOnly: the Mac app refuses private and local addresses, including
+  // names that resolve to them and redirects to them.
+  const reply = await native({type: "http", method: "GET", url, headers, timeoutMs, publicOnly: true});
   if (reply?.error) throw new Error(reply.error);
   return reply;
 }
