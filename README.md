@@ -18,7 +18,7 @@ AI service.
   [`eval/RESULTS.md`](eval/RESULTS.md).
 - **Live phishing:** 6 of 6 live phishing pages that reached the extension were blocked, 4 of
   them before any other layer (browser warnings, DNS filtering, hosting takedowns) had caught them.
-- Write-up: *(link to the article)*
+- Write-up: [I let an AI on my own hardware guard my browser. Then I threw live phishing at it.](https://www.linkedin.com/pulse/i-let-ai-my-own-hardware-guard-browser-threw-live-phishing-bondoc-npf5e/)
 
 ## Install
 
