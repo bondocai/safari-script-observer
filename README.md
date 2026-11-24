@@ -179,6 +179,11 @@ with a sketch of each page's wording as numbers, not the text itself),
 "Visit this unsafe page" choices (per tab, until it closes), and per-site visit counts. **Forget remembered
 verdicts** in Settings clears all three.
 
+**Your stats** (Settings, this Mac only, 30 days): how long checks take, how long held actions and typing
+wait, what was flagged or blocked, and when you went ahead anyway despite a warning (each is worth a look:
+it may be a false alarm). Site names are kept only for flagged pages, blocked actions and overrides; safe
+pages are only counted. **Copy summary** copies the numbers without any site names; **Clear stats** deletes them.
+
 ## Run it
 
 1. Start the test site:

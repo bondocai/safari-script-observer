@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Safari Script Observer",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "Uses your own AI model to block phishing and malicious pages, downloads, and password submissions.",
   "permissions": [
     "storage",
@@ -20,6 +20,7 @@
       "signatures.js",
       "investigate.js",
       "archive.js",
+      "stats.js",
       "background.js"
     ]
   },

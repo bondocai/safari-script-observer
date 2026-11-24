@@ -625,9 +625,25 @@
     // Password and card fields take no typing while the page's check is pending,
     // and on a suspicious page until you choose to type: a page's script can send
     // each keystroke as it is typed, long before any submit could be held.
+    // Local-only stats (see stats.js): what the user chose despite a warning, and
+    // how long typing waited for a check. Never blocks anything.
+    const stat = message => {
+      try { browser.runtime.sendMessage({type: "stat", ...message}).catch(() => {}); } catch {}
+    };
+
     const fieldGuard = (() => {
       let state = "open"; // "open" | "pending" | "suspicious" | "unchecked"
       let unlocked = false;
+      // When the user first tried to type into a held field while the check was pending.
+      let waitingSince = null;
+      const waitEnded = outcome => {
+        if (waitingSince !== null) stat({event: "typing-wait", ms: Date.now() - waitingSince, outcome});
+        waitingSince = null;
+      };
+      const letMeType = () => {
+        unlocked = true;
+        stat({event: "override", detail: state === "unchecked" ? "typed on an unchecked page" : "typed on a suspicious page"});
+      };
       let installed = false;
       let note = null;
       const targetOf = event => event.composedPath?.()[0] || event.target;
@@ -661,7 +677,10 @@
             cardNote = banner((state === "unchecked" ? "Your model could not check this page" : "This page looks suspicious") +
               ", and what you are typing looks like " +
               (looksLike === "card" ? "a card number" : "a wallet recovery phrase") + ". " +
-              "It could be sent as you type it.", "warn", () => { unlocked = true; }, "Let me type");
+              "It could be sent as you type it.", "warn", () => {
+                unlocked = true;
+                stat({event: "override", detail: looksLike === "card" ? "typed a card number" : "typed a recovery phrase"});
+              }, "Let me type");
           }
           return;
         }
@@ -677,18 +696,19 @@
         }
         on("focusin", event => {
           if (!blocking() || !isSecretField(targetOf(event))) return;
+          if (state === "pending") waitingSince ??= Date.now();
           note = state === "pending"
             ? banner("Checking this page before you type here\u2026", "info")
             : banner((state === "unchecked" ? "Your model could not check this page" : "This page looks suspicious") +
                      ", and it could send what you type here as you type it.", "warn",
-                     () => { unlocked = true; }, "Let me type");
+                     letMeType, "Let me type");
         }, true);
       };
       return {
         pending() { install(); if (state !== "suspicious") state = "pending"; },
-        suspicious() { install(); state = "suspicious"; if (note?.getAttribute("role") === "status") note.remove(); },
-        unchecked() { install(); state = "unchecked"; if (note?.getAttribute("role") === "status") note.remove(); },
-        open() { state = "open"; if (note?.getAttribute("role") === "status") note.remove(); }
+        suspicious() { install(); waitEnded("suspicious"); state = "suspicious"; if (note?.getAttribute("role") === "status") note.remove(); },
+        unchecked() { install(); waitEnded("unchecked"); state = "unchecked"; if (note?.getAttribute("role") === "status") note.remove(); },
+        open() { waitEnded("open"); state = "open"; if (note?.getAttribute("role") === "status") note.remove(); }
       };
     })();
 
@@ -823,7 +843,10 @@
         return banner(verdict.checkFailed ? "Blocked: this page could not be checked although your model server is working."
           : "Blocked by your model. Open the extension for details.", "danger");
       }
-      banner("Could not check this. " + (verdict?.summary || ""), "warn", go);
+      banner("Could not check this. " + (verdict?.summary || ""), "warn", () => {
+        stat({event: "override", detail: "went ahead after a failed check"});
+        go();
+      });
     }
 
     function onClick(event) {
@@ -898,7 +921,10 @@
                "into Terminal, Run or PowerShell are a common scam. Don't run it.", "danger");
         scheduleAssess(); // the page itself is judged again, with this attempt
       } else {
-        banner("This page tried to put a command on your clipboard, and it could not be checked.", "warn", copy, "Copy anyway");
+        banner("This page tried to put a command on your clipboard, and it could not be checked.", "warn", () => {
+          stat({event: "override", detail: "copied a command anyway"});
+          copy();
+        }, "Copy anyway");
       }
     }
 
@@ -924,7 +950,10 @@
       };
       if (verdict?.decision === "allow") banner("Your model checked " + name + " and found no problem.", "info", save, "Save file");
       else if (verdict?.decision === "block") banner("Blocked the file " + name + ". Open the extension for details.", "danger");
-      else banner("The file " + name + " could not be checked.", "warn", save, "Save anyway");
+      else banner("The file " + name + " could not be checked.", "warn", () => {
+        stat({event: "override", detail: "saved a file anyway"});
+        save();
+      }, "Save anyway");
     }
 
     onHook = hook => {

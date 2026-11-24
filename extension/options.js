@@ -87,4 +87,64 @@ $("forget").onclick = async () => {
   $("forgotten").textContent = "Forgotten. Every page will be checked again.";
 };
 
+// ---- Stats ---------------------------------------------------------------------------
+
+const statSeconds = ms => ms === null ? "–" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + " s";
+const timingLine = (label, t) => t.count
+  ? `${label}: median ${statSeconds(t.median)}, 95% within ${statSeconds(t.p95)} (${t.count})` : `${label}: none yet`;
+const tally = counts => Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(", ") || "none";
+const when = at => new Date(at).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+
+function statsText(summary) {
+  const lines = [
+    summary.since ? `Since ${new Date(summary.since).toLocaleDateString()}` : "Nothing recorded yet.",
+    `Pages checked: ${summary.pages.count} (${tally(summary.pages.outcomes)}; ${summary.pages.remembered} from memory). Frames: ${summary.frames.count}.`,
+    "",
+    "Time your model took:",
+    "  " + timingLine("Pages", summary.modelTime.pages),
+    "  " + timingLine("Held actions", summary.modelTime.actions),
+    "  " + timingLine("Frames", summary.modelTime.frames),
+    "",
+    "Held actions (from the moment you acted to the decision):"
+  ];
+  const kinds = Object.entries(summary.actions);
+  if (!kinds.length) lines.push("  none yet");
+  for (const [kind, t] of kinds) lines.push(`  ${timingLine(kind, t)}: ${tally(t.outcomes)}`);
+  lines.push("", timingLine("Waited to type in a password or card field", summary.typingWaits),
+    `Checks that failed: ${tally(summary.failures)}`,
+    `You went ahead anyway: ${summary.overrides.length} times. Flagged or blocked: ${summary.flagged.length}.`);
+  return lines.join("\n");
+}
+
+function listEvents(element, events, describe) {
+  element.replaceChildren(...events.slice(-50).reverse().map(e => {
+    const row = document.createElement("div");
+    row.textContent = `${when(e.at)} · ${e.host || "?"} · ${describe(e)}`;
+    return row;
+  }));
+  if (!events.length) element.textContent = "None.";
+}
+
+async function showStats() {
+  const {stats} = await browser.storage.local.get("stats");
+  const summary = summarizeStats(stats);
+  $("stats").textContent = statsText(summary);
+  listEvents($("overrides"), summary.overrides, e => e.detail);
+  listEvents($("flagged"), summary.flagged, e => [e.event, e.outcome, e.detail].filter(Boolean).join(", "));
+  return summary;
+}
+
+$("copyStats").onclick = async () => {
+  const summary = await showStats();
+  await navigator.clipboard.writeText("Safari Script Observer stats\n" + statsText(summary));
+  $("statsNote").textContent = "Copied.";
+};
+
+$("clearStats").onclick = async () => {
+  await browser.storage.local.remove("stats");
+  await showStats();
+  $("statsNote").textContent = "Cleared.";
+};
+
 init();
+showStats();

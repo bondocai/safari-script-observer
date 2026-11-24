@@ -12,6 +12,8 @@ committed.
 | Lab check | `node eval/lab-check/run.mjs` (`ONLY=`, `VERBOSE=1`) | Evasion paths in a sandboxed browser with a stand-in model |
 | Archive check | `node eval/archive-check.mjs` (`--online` adds eicar.org files) | Zip reading, signatures inside archives, hostile archives |
 | Turns check | `node eval/turns-check.mjs` | Model-call queue (tabs take turns, urgent first, waiting checks replaced) and whose fault a failed check is |
+| Stats check | `node eval/stats-check.mjs` | Local stats: recording, what is kept about sites, 30-day pruning, summary |
+| Scope check | `node eval/scope-check.mjs` | Scripts sharing a page or the background never declare the same name twice (run by the release script) |
 | Native check | `eval/native-check/run.sh` | The Mac app's HTTP code: investigation reaches only public addresses (names, redirects), 2 MB cap, slow servers cut off |
 | Red team | `MODEL_URL=… MODEL=… API_KEY=… node eval/redteam/run.mjs --only '^[a-h]'` | End to end: real extension code, real model, Chromium, offline lab |
 
@@ -41,6 +43,19 @@ options: `actEarly`, `floodTab` (a second tab opened first), `modelFault`
 
 Both miss e14. Single runs: borderline scenarios (e.g. d06) flip between runs.
 Raw run output: `eval/redteam/results/model-comparison-2026-11-23/`.
+
+## 2026-11-24 · v0.16.2: local stats
+
+Settings now shows stats from real browsing, kept on this Mac only: model time per page and
+held action (median, 95th percentile), how long typing waited, failed checks by cause, flagged
+pages and blocked actions, and overrides (likely false alarms). For measuring the extension in
+real Safari, which the lab results (Chromium harness) can't. Stats check 16/16 (new; plus one
+for repeat flags); an end-to-end red-team run with `STATS=1` recorded 10 page checks, 4 held
+actions, 1 typing wait and failures by cause as expected. Lab 21/21, archive 15/15, turns 11/11.
+
+Fix after release: the first build left out `stats.js`, and Settings did not work (a name
+declared twice by two of its scripts stopped its own script from running, so "Load models" did
+nothing). Both are now refused by the release script: missing files, and the new scope check.
 
 ## 2026-11-24 · v0.16.1: review fixes
 

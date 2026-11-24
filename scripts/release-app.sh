@@ -30,6 +30,14 @@ if ! xcrun notarytool history --keychain-profile "$profile" >/dev/null 2>&1; the
   exit 1
 fi
 
+# Scripts sharing a page must not declare the same name twice (the later one
+# would not run at all).
+if ! node "$here/../eval/scope-check.mjs" >/dev/null; then
+  node "$here/../eval/scope-check.mjs" | grep FAIL >&2
+  print "Fix the extension's scripts before releasing." >&2
+  exit 1
+fi
+
 print "Building and exporting for Developer ID distribution..."
 # Archive, then export with method "developer-id": the export re-signs the app for
 # distribution and leaves out development-only entitlements (get-task-allow).
@@ -64,6 +72,27 @@ for part in "$app" "$app/Contents/PlugIns/Safari Script Observer Extension.appex
 done
 if codesign -d --entitlements - "$app" 2>/dev/null | grep -q get-task-allow; then
   print "The build carries the debugging entitlement (get-task-allow); Apple would reject it." >&2
+  exit 1
+fi
+
+# Every file the extension's manifest names must be in the app: the Xcode project
+# lists extension files one by one, and a new file left off that list makes the
+# background script fail to load in Safari.
+resources="$app/Contents/PlugIns/Safari Script Observer Extension.appex/Contents/Resources"
+missing=$(/usr/bin/python3 -I - "$resources" "$here/../extension" <<'PY'
+import json, os, sys
+bundle, source = sys.argv[1], sys.argv[2]
+manifest = json.load(open(os.path.join(source, "manifest.json")))
+wanted = set(manifest["background"]["scripts"])
+wanted |= {f for c in manifest["content_scripts"] for f in c["js"]}
+wanted |= {f for w in manifest.get("web_accessible_resources", []) for f in w["resources"]}
+wanted |= {manifest["action"]["default_popup"], manifest["options_ui"]["page"]}
+wanted |= {f for f in os.listdir(source) if f.endswith((".js", ".html"))}
+print(" ".join(sorted(f for f in wanted if not os.path.exists(os.path.join(bundle, f)))))
+PY
+)
+if [[ -n $missing ]]; then
+  print "Not in the app (add them to the Xcode project's extension resources): $missing" >&2
   exit 1
 fi
 

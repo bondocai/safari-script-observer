@@ -43,7 +43,21 @@ browser.runtime.onMessage.addListener((message, sender) => {
   const pageUrl = pageAddress(sender.url);
   if (!pageUrl) return;
   if (message.type === "ping") return Promise.resolve({pong: true});
-  if (message.type === "bypass") return redeemBypass(sender.tab?.id ?? -1, pageUrl, message.token);
+  if (message.type === "bypass") return redeemBypass(sender.tab?.id ?? -1, pageUrl, message.token).then(reply => {
+    if (reply?.ok) statsRecord("events", {host: hostOf(pageUrl), event: "override", detail: "opened a blocked page"});
+    return reply;
+  });
+  // From the page script: how long typing waited, and when the user went ahead
+  // despite a warning. Only fixed kinds are kept.
+  if (message.type === "stat") {
+    if (message.event === "typing-wait" && Number.isFinite(message.ms)) {
+      statsRecord("waits", {kind: "typing", ms: Math.max(0, Math.min(message.ms, 600000)),
+                            outcome: String(message.outcome || "").slice(0, 20)});
+    } else if (message.event === "override" && overrideKinds.has(message.detail)) {
+      statsRecord("events", {host: hostOf(pageUrl), event: "override", detail: message.detail});
+    }
+    return;
+  }
   if (message.type === "capture") return captureTab(sender.tab, pageUrl).catch(error => {
     log("screenshot failed:", error?.message || error);
     return {ok: false};
@@ -75,14 +89,22 @@ browser.runtime.onMessage.addListener((message, sender) => {
     : message.type === "gate" ? gateAction(tabId, message.action, message.signals, pageUrl, frameId)
     : null;
   if (!work) return;
+  const startedAt = Date.now();
   return work.then(result => {
     log(message.type, "done:", result.verdict || result.decision, "by", result.source);
+    statsCheck(message.type === "gate" ? "action" : frameId === 0 ? "page" : "frame", startedAt, result,
+               frameId === 0 ? pageUrl : (message.signals?.page?.origin || pageUrl),
+               message.type === "gate" ? String(message.action?.kind || "other").slice(0, 20) : undefined);
     return result;
   }, error => {
     log(message.type, "error:", error);
     throw error;
   });
 });
+
+// What the page script may report the user chose to do despite a warning.
+const overrideKinds = new Set(["typed on a suspicious page", "typed on an unchecked page", "typed a card number",
+  "typed a recovery phrase", "went ahead after a failed check", "copied a command anyway", "saved a file anyway"]);
 
 // The address a page is checked under. A page a site builds in the browser
 // itself (blob:https://site/<id>, e.g. HTML smuggling) belongs to that site.
@@ -621,6 +643,10 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
         const later = closerLook(server).then(async settled => {
           if (!current()) return;
           record(settled);
+          if (settled.verdict !== "safe") {
+            statsEvent({host: hostOf(context.url || signals.page.origin), event: "page flagged",
+                                   outcome: settled.verdict, detail: "after a closer look"});
+          }
           if (fingerprint) remember({...settled, secrets: context.asksForSecrets});
           if (settled.verdict !== "safe") {
             const result = await afterVerdict(tabId, context.url || signals.page.origin, settled);
@@ -646,8 +672,9 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
       ? {verdict: "suspicious", checkFailed: true, source: "Safety rule", decidedBy: "rules",
          summary: "This page could not be checked although your model server is working. Pages can cause " +
            "this on purpose, so it is treated as suspicious.",
-         reasons: ["Checking this page failed: " + server.error.slice(0, 160)]}
-      : {...rulesAssess(signals), summary: "The model server could not be reached: " + server.error};
+         reasons: ["Checking this page failed: " + server.error.slice(0, 160)], failure: server.cause || "unknown"}
+      : {...rulesAssess(signals), summary: "The model server could not be reached: " + server.error,
+         failure: server.cause || "unknown"};
     record(fallback);
     return fallback;
   }
@@ -785,17 +812,17 @@ async function gateAction(tabId, action, signals, url, frameId = 0) {
   // The model server decides; local rules only if it is not set up or not reachable.
   // A password or payment submission reuses the page's screenshot (if one was taken in the last 10 minutes).
   const image = action.kind === "submit" && url ? screenshotFor(tabId, url, screenshotLifetimeMs) : null;
-  let result = null;
+  let result = null, failure = null;
   if (llmEnabled()) {
     const server = await attempt("model server", () => serverDecide(tasks.gate, request, image, {tab: tabId, urgent: true}));
     if (!server.error) result = server;
     else if (await failedBecauseOfPage(server)) {
       result = {decision: "block", checkFailed: true, source: "Safety rule", decidedBy: "rules",
         summary: "Blocked: this could not be checked although your model server is working. Pages can cause " +
-          "this on purpose, so it is not allowed."};
-    }
+          "this on purpose, so it is not allowed.", failure: server.cause || "unknown"};
+    } else failure = server.cause || "unknown";
   }
-  if (!result) result = rulesGate(request);
+  if (!result) result = {...rulesGate(request), ...(failure ? {failure} : {})};
 
   // Safety net: a known-bad signature always blocks, whatever a model said.
   const signature = request.action.file?.signatureMatch;

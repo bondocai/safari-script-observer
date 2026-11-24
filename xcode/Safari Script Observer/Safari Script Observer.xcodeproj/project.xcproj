@@ -71,6 +71,7 @@
             { "path": "../../../extension/models.js", "target-membership": [ "Safari Script Observer Extension/resources" ] },
             { "path": "../../../extension/investigate.js", "target-membership": [ "Safari Script Observer Extension/resources" ] },
             { "path": "../../../extension/archive.js", "target-membership": [ "Safari Script Observer Extension/resources" ] },
+            { "path": "../../../extension/stats.js", "target-membership": [ "Safari Script Observer Extension/resources" ] },
             { "path": "../../../extension/psl.js", "target-membership": [ "Safari Script Observer Extension/resources" ] },
             { "path": "../../../extension/pagehooks.js", "target-membership": [ "Safari Script Observer Extension/resources" ] },
             { "path": "../../../extension/cover-now.js", "target-membership": [ "Safari Script Observer Extension/resources" ] },

@@ -139,8 +139,9 @@ const settings = {llm: {kind: "custom", customUrl: MODEL_URL, customModel: MODEL
 store = {settings};
 const consoleLog = console.log;
 if (!VERBOSE) console.log = (...args) => { if (args[0] !== "[observer]") consoleLog(...args); };
-new Function(["psl.js", "models.js", "signatures.js", "investigate.js", "archive.js", "background.js"]
-  .map(f => readFileSync(ext + f, "utf8")).join("\n"))();
+new Function(["psl.js", "models.js", "signatures.js", "investigate.js", "archive.js", "stats.js", "background.js"]
+  .map(f => readFileSync(ext + f, "utf8")).join("\n") +
+  "; globalThis.__stats = {flushStats, summarizeStats};")();
 await new Promise(r => setTimeout(r, 300));
 
 // ---- Pages -------------------------------------------------------------------------
@@ -153,7 +154,7 @@ const browserApp = await chromium.launch({
 });
 
 async function runScenario(s, tabId) {
-  store = {settings, seen: {}};
+  store = {settings, seen: {}, ...(store.stats ? {stats: store.stats} : {})}; // stats carry over (STATS=1)
   const startOrigin = new URL(s.start).origin;
   if (s.visitsBefore) store.seen[startOrigin] = {count: s.visitsBefore, last: Date.now()};
   const hitsBefore = lab.hits.length;
@@ -394,6 +395,11 @@ ${r.title || ""}
 - waited for the extension before typing: ${(r.waited || []).length ? r.waited.join(", ") + " s" : "no"}
 `).join("\n")}`;
 writeFileSync(outDir + "/report.md", report);
+// STATS=1: print what the extension's local stats (stats.js) recorded during the run.
+if (process.env.STATS) {
+  await globalThis.__stats.flushStats();
+  consoleLog("\nLocal stats recorded:\n" + JSON.stringify(globalThis.__stats.summarizeStats(store.stats), null, 1));
+}
 writeFileSync(outDir + "/results.json", JSON.stringify(results, null, 1));
 consoleLog("\n" + report.split("## Each scenario")[0]);
 consoleLog("Full report and screenshots: " + outDir);

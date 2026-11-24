@@ -96,6 +96,21 @@ Form values, cookies, and passwords are never sent to any model.</p>
   <button type="button" id="forget">Forget remembered verdicts</button> <span class="hint" id="forgotten"></span>
 </fieldset>
 <p class="hint" id="testResult"></p>
+<fieldset>
+  <legend>Your stats (this Mac only)</legend>
+  <p class="hint">How the extension behaves in your own browsing: how long checks take, how long held actions and
+  typing wait, what was flagged, and when you went ahead anyway (each of those is worth a look: it may be a false
+  alarm). Kept in this extension's storage for 30 days and never sent anywhere. Site names are kept only for flagged
+  pages, blocked actions and your overrides; safe pages are only counted.</p>
+  <div id="stats" style="white-space:pre-line">Loading…</div>
+  <h3 style="font-size:14px;margin:16px 0 4px">You went ahead anyway</h3>
+  <div id="overrides" class="hint"></div>
+  <h3 style="font-size:14px;margin:16px 0 4px">Flagged and blocked</h3>
+  <div id="flagged" class="hint"></div>
+  <p><button type="button" id="copyStats">Copy summary (numbers only, no sites)</button>
+     <button type="button" id="clearStats">Clear stats</button> <span class="hint" id="statsNote"></span></p>
+</fieldset>
 <script src="models.js"></script>
+<script src="stats.js"></script>
 <script src="options.js"></script>
 </body></html>

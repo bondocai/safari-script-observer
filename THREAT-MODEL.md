@@ -95,7 +95,8 @@ Screenshots and the investigation can each be turned off in Settings. Screenshot
 kept in memory for at most 10 minutes and dropped when their tab closes. Stored on this
 Mac only: remembered verdicts (24 hours; 1 hour for pages asking for secrets), with a
 numeric sketch of each page's wording rather than the text; "visit anyway" choices per
-tab; per-site visit counts.
+tab; per-site visit counts; your stats (30 days: timings and outcomes, with site names only
+for flagged pages, blocked actions and your overrides; shown and cleared in Settings).
 
 ## Non-goals and known limits
 
