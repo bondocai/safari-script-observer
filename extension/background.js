@@ -55,6 +55,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
                             outcome: String(message.outcome || "").slice(0, 20)});
     } else if (message.event === "override" && overrideKinds.has(message.detail)) {
       statsRecord("events", {host: hostOf(pageUrl), event: "override", detail: message.detail});
+    } else if (message.event === "send blocked" && /^[a-z0-9.:\[\]-]{1,260}$/i.test(String(message.detail || ""))) {
+      statsEvent({host: hostOf(pageUrl), event: "send blocked", outcome: "blocked", detail: String(message.detail)});
     }
     return;
   }
@@ -603,8 +605,11 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
     // Same page, same code, same model, checked recently: reuse the verdict. Not
     // when the page's text or title changed a lot since its last check (the code
     // fingerprint leaves text out, so a page rewritten by its own scripts would
-    // otherwise get its old verdict back).
-    const remembered = fingerprint && !context.textChanged &&
+    // otherwise get its old verdict back). Nor once the extension has caught the
+    // page sending typed secrets away or planting a command: that is new evidence
+    // the old verdict never saw.
+    const caughtSomething = signals.secretSends?.length || signals.clipboardCommands?.length;
+    const remembered = fingerprint && !context.textChanged && !caughtSomething &&
       await rememberedVerdict(pageKey, fingerprint, sketch).catch(() => null);
     if (remembered) {
       const result = {verdict: remembered.verdict, summary: remembered.summary, reasons: remembered.reasons,
@@ -617,7 +622,9 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
 
     // Pages asking for secrets get a screenshot first (the page script takes it and asks again).
     // Never on trusted sites: their pages show your own accounts.
-    if (settings.screenshots && context.asksForSecrets && !context.screenshotTaken && !context.trusted) {
+    // Nor for a model found not to accept images.
+    if (settings.screenshots && context.asksForSecrets && !context.screenshotTaken && !context.trusted &&
+        !textOnlyModels.has(modelKey())) {
       return {needScreenshot: true};
     }
 

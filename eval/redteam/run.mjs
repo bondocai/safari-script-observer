@@ -135,7 +135,7 @@ globalThis.browser = {
   scripting: {getRegisteredContentScripts: async () => [], unregisterContentScripts: async () => {}, registerContentScripts: async () => {}}
 };
 const settings = {llm: {kind: "custom", customUrl: MODEL_URL, customModel: MODEL, apiKey: API_KEY},
-                  coverMode: "moments", skipSites: [], screenshots: true, investigate: true, timeoutMs: 30000};
+                  coverMode: "moments", skipSites: [], screenshots: process.env.SCREENSHOTS !== "0", investigate: true, timeoutMs: 30000};
 store = {settings};
 const consoleLog = console.log;
 if (!VERBOSE) console.log = (...args) => { if (args[0] !== "[observer]") consoleLog(...args); };

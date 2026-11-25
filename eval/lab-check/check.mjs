@@ -36,7 +36,7 @@ function judge(message) {
   const s = message.signals || {};
   const secretFields = (s.forms || []).some(f => f.hasPassword || f.asksForPayment) || (s.secretFields || []).length > 0;
   const host = new URL(s.page?.origin || "http://none").hostname;
-  if (host === "install-docs.localhost") return "safe";
+  if (host === "install-docs.localhost" || host === "travel-booking.localhost") return "safe";
   if (secretFields && host !== "examplebank.localhost") return "malicious";
   if ((s.clipboardCommands || []).length) return "malicious";
   if (/infected|call .*support/i.test((s.text || "") + " " + (s.page?.title || ""))) return "malicious";
@@ -45,13 +45,17 @@ function judge(message) {
 function gate(message, forced) {
   const action = message.action || {};
   const host = new URL(message.signals?.page?.origin || "http://none").hostname;
-  if (action.kind === "clipboard") return host === "install-docs.localhost" ? "allow" : "block";
+  // Clipboard: a copy that adds text the page doesn't show (pastejacking) is blocked;
+  // otherwise only the two legitimate controls are allowed.
+  if (action.kind === "clipboard") {
+    return action.shownOnPage !== false && ["install-docs.localhost", "chat-answer.localhost"].includes(host) ? "allow" : "block";
+  }
   if (action.kind === "download") return /\.html?$/i.test(action.file?.name || action.url || "") ? "block" : "allow";
   return (forced || judge(message)) === "safe" ? "allow" : "block";
 }
 
 async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto, typeFrame, verdict: forced, click, probeTop,
-                             pressBanner, saveFile, refuseBlockPage, urlSuffix = "", openedAnyway, breakStart}) {
+                             pressBanner, saveFile, refuseBlockPage, urlSuffix = "", openedAnyway, breakStart, typed}) {
   await get("/lab/received/clear");
   const context = await browser.newContext({viewport: {width: 1024, height: 768}, acceptDownloads: true});
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {origin: lab(site).slice(0, -1)});
@@ -68,7 +72,9 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
   await context.exposeBinding("__ssoBackground", async ({frame}, json) => {
     const message = JSON.parse(json);
     const entry = {type: message.type, kind: message.action?.kind, at: Date.now() - started, top: message.top,
-                   fileSize: message.action?.file?.size};
+                   secretSends: message.signals?.secretSends,
+                   fileSize: message.action?.file?.size, shownOnPage: message.action?.shownOnPage,
+                   hiddenPart: message.action?.hiddenPart};
     log.push(entry);
     if (message.type !== "assess" && message.type !== "gate") return "null";
     await new Promise(resolve => setTimeout(resolve, 1200)); // model time
@@ -169,6 +175,11 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     await page.waitForTimeout(300);
   }
   if (typeInto) await typeOnce();
+  // Fields typed once, as a person would (selector -> text).
+  for (const [selector, text] of Object.entries(typed || {})) {
+    await page.locator(selector).click({timeout: 1500}).catch(() => {});
+    await page.locator(selector).pressSequentially(text, {delay: 10, timeout: 3000}).catch(() => {});
+  }
   if (click) await page.locator(click).click({timeout: 1500}).catch(() => {});
   // A person accepting the extension's "Save file" once the check is done.
   if (saveFile) {
@@ -193,6 +204,9 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
   return {name, blocked, redCover, leaked, failedReported: log.some(m => m.type === "failed"), downloads, clipboard, offered, coverOnTop,
           gates: log.filter(m => m.type === "gate").map(m => m.kind + ":" + m.decision + (process.env.VERBOSE && m.fileSize !== undefined ? "(" + m.fileSize + " bytes)" : "")),
           checks: log.filter(m => m.type === "assess").length,
+          sends: log.filter(m => m.type === "assess" && m.secretSends).map(m => m.secretSends).at(-1) || [],
+          arrived: (await get("/lab/received")).map(r => r.site + r.path),
+          copies: log.filter(m => m.type === "gate" && m.kind === "clipboard").map(m => ({shown: m.shownOnPage, hidden: m.hiddenPart || ""})),
           frameChecks: log.filter(m => m.type === "assess" && m.top === false).length};
 }
 
@@ -250,6 +264,27 @@ const scenarios = [
    ok: r => has(r.offered, "could not check this page") && r.failedReported},
   {name: "Control: install docs copy button", site: "install-docs", click: "#copy",
    ok: r => !r.blocked && has(r.gates, "clipboard:allow") && has(r.offered, "found no problem")},
+  // A chat app copies the answer as Markdown while showing it rendered: the same text.
+  {name: "Control: chat answer copied as Markdown", site: "chat-answer", click: "#copy",
+   ok: r => r.copies[0]?.shown === true && has(r.gates, "clipboard:allow")},
+  {name: "Pastejacking: Markdown answer plus a hidden command", site: "chat-pastejack", click: "#copy",
+   ok: r => r.copies[0]?.shown === false && /curl/.test(r.copies[0].hidden) && !/Performance/.test(r.copies[0].hidden) &&
+            has(r.gates, "clipboard:block")},
+  // Costco Travel: radio buttons named carDrop... were taken for a card field, and a
+  // hidden, AutoFilled sign-in box held every click.
+  {name: "Control: travel site calendar click not held", site: "travel-booking", click: "#calendar",
+   ok: r => !r.blocked && !r.gates.length},
+  // Web skimmers on a trusted site (the page itself is judged safe): the card must not
+  // leave, and the model must be told.
+  {name: "Skimmer (British Airways style): XHR on mouse-up", site: "skim-airline", verdict: "safe", click: "#pay",
+   typed: {"#cc-name": "A Traveller", "#cc-num": "4111 1111 1111 1111", "#cc-exp": "09/29", "#cc-cvv": "318"},
+   ok: r => r.leaked === 0 && has(r.offered, "tried to send the card number") && r.sends.some(s => s.destination.startsWith("skim-sink"))},
+  {name: "Skimmer: base64 by fetch", site: "skim-airline-b64", verdict: "safe", click: "#pay",
+   typed: {"#cc-name": "A Traveller", "#cc-num": "5555555555554444", "#cc-exp": "09/29", "#cc-cvv": "318"},
+   ok: r => r.leaked === 0 && has(r.offered, "tried to send")},
+  {name: "Control: checkout with analytics, card to its own site", site: "shop-checkout", verdict: "safe", click: "#pay",
+   typed: {"#cc-num": "4111111111111111", "#cc-exp": "09/29"},
+   ok: r => !has(r.offered, "tried to send") && r.arrived.includes("shop-checkout/pay") && r.arrived.includes("analytics-sink/events")},
   {name: "Control: real bank login", site: "examplebank", typeInto: "#p", ok: r => !r.blocked}
 ];
 
@@ -269,6 +304,7 @@ for (const scenario of scenarios.filter(s => !process.env.ONLY || new RegExp(pro
     r.gates.length && "held: " + r.gates.join(", "),
     r.downloads && "files saved: " + r.downloads,
     r.clipboard && "clipboard: " + JSON.stringify(r.clipboard.slice(0, 30)),
+    r.copies.some(c => c.shown === false) && "copy not shown on page, hidden: " + JSON.stringify(r.copies[0].hidden.slice(0, 80)),
     r.coverOnTop !== null && "cover on top: " + (r.coverOnTop ? "yes" : "NO")
   ].filter(Boolean).join(" · ");
   console.log(`${ok ? "  PASS" : "  FAIL"}  ${r.name.padEnd(46)} ${details}`);

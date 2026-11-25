@@ -44,6 +44,51 @@ options: `actEarly`, `floodTab` (a second tab opened first), `modelFault`
 Both miss e14. Single runs: borderline scenarios (e.g. d06) flip between runs.
 Raw run output: `eval/redteam/results/model-comparison-2026-11-23/`.
 
+## 2026-11-25 · v0.16.4: typed secrets sent to another site (web skimmers)
+
+A British Airways-style skimmer (2018) is a few lines added to a genuine site's own script: it
+waits for the mouse-up on "Pay" and posts the card to a lookalike domain. Held clicks didn't
+stop it, because the data left before the click. The page's network functions (`fetch`, XHR,
+`sendBeacon`, WebSocket, image/script/frame addresses) now refuse any request carrying a
+password or valid card number the person typed (as typed, digits only, URL-encoded or base64)
+to another site. The same site, the form's own destination and known payment and sign-in
+providers are allowed. A caught send shows a red warning naming the destination, blocks
+further held actions and goes to the model as evidence.
+
+- Lab: BA-style XHR on mouse-up and a base64 `fetch` variant are stopped (both leaked before);
+  a checkout with analytics pings that posts the card to its own site stays quiet.
+- Red team, Qwen, full suite (63 attacks, 49 genuine): 60 stopped, 46 OK, 1 friction, the same
+  2 false alarms as before (d02, f02). No new false alarms on SSO, OAuth or hosted checkouts.
+  **e14** (compromised support widget asking for the password again), missed in every earlier
+  run, is now stopped: the password never leaves. a08 and a13 were missed this run; they flip
+  between runs with no send involved (also missed on 2026-11-23), so model variance.
+- Fixes found on the way: a "Checking…" note could replace a red warning (warnings now win);
+  a page whose verdict was remembered kept "safe" after a caught send (a caught send or
+  clipboard command now always forces a fresh check: e14 rerun is judged malicious).
+
+Lab 27/27 (3 new) and scope check pass.
+
+## 2026-11-25 · v0.16.3: quieter on genuine sites
+
+The first day of real browsing found three interruptions on genuine sites, each now a lab test:
+
+- **A chat app's Copy button was blocked.** Chat apps copy the answer as Markdown while showing
+  it formatted; the copy didn't match the page exactly, so the whole answer was reported as
+  hidden (pastejacking). Copies are now compared line by line, ignoring formatting; only lines
+  shown nowhere on the page count as hidden. The model is also told that prose which only
+  mentions commands is not a command. Lab: the Markdown answer is allowed, the same answer
+  with a hidden `curl … | sh` line is blocked (only that line reported hidden).
+- **Every click on a travel site waited for the model.** Radio buttons named
+  `carDropOfLocationType` were taken for a card field ("carD…"), and a filled secret field holds
+  every click. Payment fields are now matched by whole words (names split at camelCase, `_`, `-`),
+  only fields a person types into count, and clicks are held only for secrets on screen or typed
+  by the person (not a hidden sign-in box AutoFill completed). Lab: the calendar click is not held.
+- **Models that don't accept images failed every sign-in page** (the screenshot was refused, and
+  the failure was blamed on the page). The check is now sent again without the image and the
+  model is remembered as text-only. Tested with DeepSeek V4 Flash with screenshots on.
+
+Lab 24/24 (3 new), stats, turns, archive and scope checks pass.
+
 ## 2026-11-24 · v0.16.2: local stats
 
 Settings now shows stats from real browsing, kept on this Mac only: model time per page and
@@ -107,6 +152,22 @@ self-tests): 50/61 attacks stopped (11 missed, including both sleeper self-tests
 21/45 legitimate OK (24 false alarms). Many pages were still "checking" when the harness
 acted (23 scenarios), so part of this is speed rather than judgment. Not fit as the only
 judge; a second opinion would need to be limited to pages the main model already finds risky.
+
+**Candidate main judge: DeepSeek V4 Flash (Q2_K, llama.cpp on a multi-GPU machine, 4,096-token
+context), text only.** The model doesn't accept images, so screenshots were off for this run
+(`SCREENSHOTS=0`); the extension also failed every sign-in page with this model until v0.16.3
+(see there). Same 106 scenarios as the last full Qwen 27B run (which had screenshots):
+
+| | Qwen 27B (screenshots) | DeepSeek V4 Flash (text only) |
+|---|---|---|
+| Attacks stopped | 60/61 (missed e14) | 58/61 (missed c13, e05, e14) |
+| Legitimate OK | 43/45 (d02, f02) | 41/45 (d02, d06, d11, f02) |
+
+DeepSeek caught both canvas-drawn logins (a07, c07) without seeing them, from code and
+structure alone. It missed the supplier bank-change request (c13) and the skimmer on a shop
+(e05), both of which Qwen held. d11 was still being checked when the harness acted (speed).
+One run each, so differences of one or two scenarios may be noise. All 6 newer self-tests
+passed. Qwen 27B stays the recommended model.
 
 ## 2026-11-24 · Round 4: prompt injection (OWASP LLM01) and baseline rerun
 

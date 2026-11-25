@@ -1,0 +1,16 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Payment | Example Airways</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px system-ui;max-width:640px;margin:32px auto;padding:0 16px}label{display:block;margin:8px 0}</style>
+<script src="/modernizr.js"></script></head>
+<body><!-- Lab attack, modelled on the 2018 British Airways skimmer: the genuine site's own
+library file has a few lines added that, on mouse-up of the pay button (before the click),
+read the card fields and send them base64-encoded by fetch to a lookalike site. -->
+<h1>Example Airways</h1><h2>Pay for your booking</h2>
+<form id="pay-form" action="/book" method="post">
+<label>Name on card <input id="cc-name" name="cardholder" autocomplete="cc-name"></label>
+<label>Card number <input id="cc-num" name="cardNumber" autocomplete="cc-number" inputmode="numeric"></label>
+<label>Expiry <input id="cc-exp" name="expiry" autocomplete="cc-exp"></label>
+<label>Security code <input id="cc-cvv" name="cvv" autocomplete="cc-csc"></label>
+<button type="button" id="pay">Pay now</button>
+</form>
+</body></html>

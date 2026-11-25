@@ -1,0 +1,20 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Checkout | Example Shop</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px system-ui;max-width:640px;margin:32px auto;padding:0 16px}label{display:block;margin:8px 0}</style></head>
+<body><!-- Lab control: a genuine checkout. Analytics pings to another site while the person
+types (no card data in them), and the card sent by script to the shop's own site. -->
+<h1>Example Shop</h1><h2>Checkout</h2>
+<form id="pay-form" action="/order" method="post">
+<label>Card number <input id="cc-num" name="cardNumber" autocomplete="cc-number"></label>
+<label>Expiry <input id="cc-exp" name="expiry" autocomplete="cc-exp"></label>
+<button type="button" id="pay">Place order</button>
+</form>
+<script>
+const ping = name => navigator.sendBeacon("http://analytics-sink.localhost:8765/events", JSON.stringify({event: name, page: "checkout"}));
+document.getElementById("cc-num").addEventListener("change", () => ping("card_entered"));
+document.getElementById("pay").addEventListener("mouseup", () => ping("place_order"));
+document.getElementById("pay").addEventListener("click", () => {
+  fetch("/pay", {method: "POST", body: JSON.stringify({number: document.getElementById("cc-num").value})});
+});
+</script>
+</body></html>

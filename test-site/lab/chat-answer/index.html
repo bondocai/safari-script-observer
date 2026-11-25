@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Chat</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px system-ui;max-width:760px;margin:32px auto;padding:0 16px}code{background:#eee;padding:0 3px}</style></head>
+<body><!-- Lab control: a chat app's copy button copies the answer as Markdown, while the page shows it rendered. -->
+<div id="answer">
+<h2>5. Implementation notes</h2>
+<ul>
+<li><strong>Performance:</strong> all hooks must be efficient. Use <code>Proxy</code> sparingly; prefer <code>Object.defineProperty</code> for hot paths.</li>
+<li><strong>Storage:</strong> never read <code>localStorage</code> or <code>document.cookie</code> from the hook; never call <code>eval()</code>.</li>
+<li><strong>Testing:</strong> see the <a href="https://example.com/guide">testing guide</a>.</li>
+</ul>
+<table><tr><th>Hook</th><th>Cost</th></tr><tr><td>value getter</td><td>low</td></tr></table>
+</div>
+<button id="copy">Copy</button>
+<script>
+const markdown = [
+  "## 5. Implementation notes", "",
+  "- **Performance:** all hooks must be efficient. Use `Proxy` sparingly; prefer `Object.defineProperty` for hot paths.",
+  "- **Storage:** never read `localStorage` or `document.cookie` from the hook; never call `eval()`.",
+  "- **Testing:** see the [testing guide](https://example.com/guide).", "",
+  "| Hook | Cost |", "|---|---|", "| value getter | low |"
+].join("\n");
+document.getElementById("copy").onclick = () => navigator.clipboard.writeText(markdown);
+</script>
+</body></html>

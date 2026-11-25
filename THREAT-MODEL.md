@@ -41,6 +41,7 @@ fool, break or exhaust it.
 | Press the extension's own buttons, or remove its warnings | Warnings live in closed shadow roots and act only on real (trusted) clicks; the warning bar on a page opened anyway can't be removed by the page | Code |
 | Fake a go-ahead for a held action | Hooks in the page's own JavaScript context only block and report; nothing is resumed from there. After the model allows it, the extension's isolated script copies the command or saves the file itself, on your click. Forged reports can only add holds | Code |
 | Point the investigation at your Mac or home network (a form "destination" on 192.168.x.x, a name that resolves there, a redirect there) | Investigation requests go only to public internet addresses: names are resolved and checked, redirects are checked, and the address actually connected to is checked afterwards. Responses stop at 2 MB; slow-drip servers are cut off | Code (Mac app) |
+| Send what you type to another site from its own scripts (skimming) | Requests carrying a typed password or card number to a different site are blocked before they leave; the page is judged again with that evidence | Code (in the page) |
 | Crash the extension's page script so the page is never checked | A start-up failure is reported and the page shows "not checked", rather than silently running unprotected | Code |
 | Hide a malicious file in an archive, or crash the archive reader | Zips are read in memory (never written to disk), 3 levels deep, with limits on size, entry count and time (5 seconds); a known-bad signature (e.g. EICAR) is always blocked, whatever the model says | Code |
 
@@ -51,6 +52,19 @@ or skim what you type. Every address involved is genuine, so the page looks righ
 
 - Trusted sites still have their code fingerprinted, are re-checked when it changes,
   and have password and payment submissions and downloads held.
+- **A script sending what you typed to another site** (a web skimmer, as in the 2018
+  British Airways attack, where a few lines added to the site's own library sent card
+  details to a lookalike domain on mouse-up, before the click) is stopped in the page:
+  while a password or a valid card number is typed in, any request from the page's
+  scripts (fetch, XMLHttpRequest, sendBeacon, WebSocket, image or script address)
+  that carries it, as typed, as digits, URL-encoded or base64, to a different site is
+  blocked before it leaves. Known payment and sign-in providers and the field's own
+  form destination are allowed. You are warned, further held actions on that page are
+  blocked, and the model is told. The comparison happens in the page; the secret is
+  never reported. **Limits:** data scrambled with the skimmer's own scheme (XOR,
+  encryption), data split across several requests, or sent by a route not covered
+  (a fresh frame's own network functions, a form posted elsewhere after the click) is
+  not recognised.
 - **Known limit:** when a hacked widget on a trusted site asks you to sign in again,
   the model currently has no way to know which script drew the password box, and lets
   it through (red-team scenario e14). This is the closest test to the supply-chain

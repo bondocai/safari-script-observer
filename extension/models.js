@@ -123,7 +123,11 @@ const tasks = {
       "lists commands the page tried to put on the clipboard by script (blocked by the extension): a page that " +
       "copies a command and tells the user to paste it into Terminal, the Run box or PowerShell (for example to " +
       "'verify you are human' or 'fix an error') is a scam, and so is a page telling the user to paste code into " +
-      "the browser's developer console or address bar."
+      "the browser's developer console or address bar. secretSends lists requests from the page's scripts that " +
+      "carried a password or card number the user typed to another site, stopped by the extension before they left: " +
+      "that is a web skimmer (as in the 2018 British Airways attack) or a phishing kit, even on a genuine, old, " +
+      "familiar site whose own code was hacked. Judge the page malicious unless the destination is plainly that " +
+      "site's own service under another name."
   },
   investigate: {
     key: "verdict",
@@ -175,7 +179,10 @@ const tasks = {
       "hands over the user's logged-in session): block it whatever reason the page gives. Allow a command only when the page is plainly the official documentation " +
       "of the software the command installs, on that software's own domain. shownOnPage false means the copied " +
       "text is not what the page shows the user: hiddenPart is what they could not see. A copy that adds hidden " +
-      "commands (pastejacking) is a scam: block it. Allow ordinary actions."
+      "commands (pastejacking) is a scam: block it. Copied text that is mainly prose shown on the page (an answer " +
+      "in a chat app, an article, notes) is not a command just because " +
+      "it mentions or explains commands, cookies or storage: allow it, unless it contains a line meant to be run that " +
+      "does one of the harmful things above. Allow ordinary actions."
   }
 };
 
@@ -254,8 +261,20 @@ function chatUrl() {
   return base.endsWith("/v1") ? base + "/chat/completions" : base + "/v1/chat/completions";
 }
 
-// `image` is an optional JPEG data URL (a screenshot of the page).
+// Models found not to accept images (by server address and model), so their
+// requests leave the screenshot out instead of failing.
+const textOnlyModels = new Set();
+const modelKey = () => settings.llm.kind === "ollama"
+  ? "ollama|" + settings.llm.ollamaUrl + "|" + settings.llm.ollamaModel
+  : "custom|" + settings.llm.customUrl + "|" + settings.llm.customModel;
+// A server's refusal of the image itself (not of the request): text-only model.
+const refusesImages = reply => reply.status >= 400 && reply.status !== 401 && reply.status !== 403 &&
+  /image|vision|multimodal|mmproj|modalit/i.test(String(reply.body || "").slice(0, 2000));
+
+// `image` is an optional JPEG data URL (a screenshot of the page). With a model
+// that doesn't accept images, the request is sent without it (sentImage: false).
 async function callServer(system, input, schema, maxTokens, image) {
+  if (image && textOnlyModels.has(modelKey())) image = null;
   const ollama = settings.llm.kind === "ollama";
   const text = JSON.stringify(input) + (image ? "\n\nA screenshot of the visible page is attached." : "");
   const user = !image ? {role: "user", content: text}
@@ -279,6 +298,10 @@ async function callServer(system, input, schema, maxTokens, image) {
   const reply = await native({type: "http", url: chatUrl(), headers, body: JSON.stringify(body),
                               timeoutMs: settings.timeoutMs});
   if (reply?.error) throw modelError(networkProblem(reply, chatUrl()), Number(reply.code) === -1001 ? "timeout" : "network");
+  if (reply.status !== 200 && image && refusesImages(reply)) {
+    textOnlyModels.add(modelKey());
+    return callServer(system, input, schema, maxTokens, null);
+  }
   if (reply.status !== 200) {
     throw modelError(statusProblem(reply, chatUrl()), [401, 403, 404].includes(reply.status) ? "setup" : "status");
   }
@@ -290,7 +313,8 @@ async function callServer(system, input, schema, maxTokens, image) {
     (data.choices?.[0]?.finish_reason === "length" ? " (it used its whole reply length on reasoning)" : ""), "answer");
   // Some reasoning models prepend a <think> block; keep only the JSON.
   try {
-    return {output: JSON.parse(content.replace(/<think>[\s\S]*?<\/think>/g, "").trim()), seconds: reply.seconds};
+    return {output: JSON.parse(content.replace(/<think>[\s\S]*?<\/think>/g, "").trim()), seconds: reply.seconds,
+            sentImage: !!image};
   } catch {
     throw modelError("The model's answer was not valid JSON", "answer");
   }
@@ -298,13 +322,13 @@ async function callServer(system, input, schema, maxTokens, image) {
 
 // `lane` (optional): which tab the call is for, so calls take turns (see inTurn).
 async function serverDecide(task, input, image, lane) {
-  const {output, seconds: s} = await inTurn(lane, () => callServer(task.system, input, {
+  const {output, seconds: s, sentImage} = await inTurn(lane, () => callServer(task.system, input, {
     type: "object", additionalProperties: false, required: [task.key],
     properties: {[task.key]: {type: "string", enum: task.values}}
   }, 30, image));
   if (!task.values.includes(output?.[task.key])) throw modelError("Unexpected model output", "answer");
-  return {[task.key]: output[task.key], decidedBy: "server", withScreenshot: !!image,
-          source: llmLabel() + " \u00b7 " + seconds(s) + (image ? " \u00b7 with screenshot" : "")};
+  return {[task.key]: output[task.key], decidedBy: "server", withScreenshot: sentImage,
+          source: llmLabel() + " \u00b7 " + seconds(s) + (sentImage ? " \u00b7 with screenshot" : "")};
 }
 
 // Long model text, cut at a word boundary rather than mid-word.

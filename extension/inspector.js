@@ -266,7 +266,16 @@
       try { return new URL(value, location.href).pathname; } catch { return ""; }
     };
     const clipboardCommands = [];
-    const paymentWords = /card|cvv|cvc|security code|expir|iban|routing|account number|ssn|social security/i;
+    const secretSends = [];
+    // Matched against whole words: field names are split at camelCase, "_", "-" and "."
+    // first (cardNumber -> card number), so carDropOff ("car drop off") is not a card.
+    const paymentWords = /\b((credit|debit)?card(holder|number|num|no|name)?|cvv2?|cvc2?|csc|security code|expir\w*|iban|routing|account number|ssn|social security)\b/i;
+    const fieldWords = text => String(text || "").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_\-.\[\]]+/g, " ");
+    // Only fields a person types or picks a secret into; choices (radio, checkbox),
+    // buttons, dates and files never hold a card number or password.
+    const typedTypes = new Set(["text", "tel", "number", "password", "search", "month", "email"]);
+    const holdsTypedText = field => field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement ||
+      (field instanceof HTMLInputElement && typedTypes.has(field.type));
     const clip = (text, max) => (text || "").replace(/\s+/g, " ").trim().slice(0, max);
     // Privacy: balances, account and card numbers, and dates never reach the model.
     // Page text and titles lose every digit; code and addresses lose long numbers
@@ -281,8 +290,8 @@
     }
 
     function isPaymentField(field) {
-      return paymentWords.test(labelFor(field) + " " + field.name + " " + field.id) ||
-        /^cc-/.test(field.getAttribute("autocomplete") || "");
+      return holdsTypedText(field) && (paymentWords.test(fieldWords(labelFor(field) + " " + field.name + " " + field.id)) ||
+        /^cc-/.test(field.getAttribute("autocomplete") || ""));
     }
     // A wallet's recovery (seed) phrase or private key: whoever has it owns the funds.
     const phraseWords = /recovery phrase|seed phrase|secret phrase|wallet phrase|mnemonic|private key|\b(12|24)[- ]word/i;
@@ -376,6 +385,7 @@
         externalLinkOrigins: [...new Set(links.map(a => originOf(a.href)).filter(o => o !== location.origin))].slice(0, 15),
         // Commands this page tried to put on the clipboard (blocked by pagehooks.js).
         ...(clipboardCommands.length ? {clipboardCommands: clipboardCommands.slice(-3)} : {}),
+        ...(secretSends.length ? {secretSends: secretSends.slice(-3)} : {}),
         // Trusted sites: structure only, never what the page says.
         text: trusted ? "" : maskDigits(clip(document.body?.innerText, 1500)),
         ...(trusted ? {textWithheld: "trusted site"} : {}),
@@ -529,7 +539,7 @@
       // Frames are checked only once they ask for a password or payment details.
       if (!isTop && !secrets) return;
       const seen = {structure: JSON.stringify([signals.forms, signals.scripts, signals.iframes, signals.downloads, signals.secretFields,
-                                                signals.clipboardCommands]),
+                                                signals.clipboardCommands, signals.secretSends]),
                     title: signals.page.title, images: JSON.stringify(signals.images.map(i => [i.host, i.alt])),
                     words: wordsOf(signals.text), secrets};
       const textChanged = !!lastSeen && (seen.title !== lastSeen.title || overlap(seen.words, lastSeen.words) < 0.6);
@@ -538,7 +548,7 @@
       // flood the model, but is never left unchecked: changes to what the page says
       // or shows (text, title, images, password or card fields) within 5 seconds,
       // other structural churn within 20.
-      const visible = textChanged || seen.images !== lastSeen?.images ||
+      const visible = textChanged || seen.images !== lastSeen?.images || !!signals.secretSends ||
         (secrets && !lastSeen?.secrets);
       const wait = assessments >= 6 ? lastAssessAt + (visible ? 5000 : 20000) - Date.now() : 0;
       if (wait > 0) {
@@ -743,8 +753,8 @@
       on("focusin", event => {
         const field = event.target;
         if (!(field instanceof HTMLInputElement)) return;
-        const secret = field.type === "password" || paymentWords.test(field.name + " " + field.autocomplete + " " +
-          (field.labels?.[0]?.textContent || "") + " " + (field.placeholder || ""));
+        const secret = field.type === "password" || (holdsTypedText(field) && paymentWords.test(fieldWords(field.name + " " +
+          field.autocomplete + " " + (field.labels?.[0]?.textContent || "") + " " + (field.placeholder || ""))));
         if (!secret) return;
         tip?.host.remove();
         const box = field.getBoundingClientRect();
@@ -791,9 +801,14 @@
     // clicks (event.isTrusted): the page's script can't read, reword or press them
     // (e.g. press "Let me type" on a suspicious page for the user).
     function banner(text, tone, proceed, proceedLabel = "Proceed anyway") {
+      // A progress note never covers a warning: it is created but not shown.
+      if (tone === "info" && current?.isConnected && current.dataset.tone === "danger") {
+        return document.createElement("div");
+      }
       current?.remove();
       const host = document.createElement("div");
       host.setAttribute("role", tone === "info" ? "status" : "alert");
+      host.dataset.tone = tone;
       const colors = {danger: "#b42318", warn: "#b54708", info: "#344054"};
       host.style.cssText = "all:initial;position:fixed;top:16px;left:50%;transform:translateX(-50%);max-width:560px;" +
         "z-index:2147483647;display:block";
@@ -832,6 +847,9 @@
       }
       event.preventDefault();
       event.stopImmediatePropagation();
+      // This page's own scripts were caught sending a typed secret elsewhere: nothing
+      // more is sent or saved from it.
+      if (secretSends.length) return banner(sendWarning(secretSends.at(-1)), "danger");
 
       const waiting = banner("Checking with your model\u2026", "info");
       const verdict = await send({type: "gate", action, signals: collect()});
@@ -864,7 +882,10 @@
       // is filled in: the page's own script may be about to send it.
       const button = element.closest('button, input[type="button"], input[type="submit"], [role="button"], a');
       if (!button || (button.form && button.type === "submit")) return; // submits are held in onSubmit
-      const filled = allInputs().filter(field => isSecretField(field) && field.value);
+      // Only secrets the person can see or typed in: a box filled out of sight (for
+      // example a hidden sign-in form AutoFill completed) doesn't hold every click.
+      const filled = allInputs().filter(field => isSecretField(field) && field.value &&
+        (field.getClientRects().length > 0 || typedInto.has(field)));
       if (!filled.length) return;
       hold(event, button, {kind: "submit", form: {
         actionOrigin: "unknown: sent by the page's own script", method: "script", crossOrigin: null,
@@ -889,10 +910,29 @@
     // in the page's context, where the page could fake the go-ahead.
     // Whether the copied text is what the page visibly shows. A copy that adds
     // text the user cannot see ("pastejacking") is a strong sign of a scam.
+    // Copy buttons in chat apps and docs often copy Markdown while the page shows it
+    // formatted, so formatting is ignored and the copy is compared line by line: only
+    // lines that appear nowhere on the page count as hidden.
     function comparedWithPage(command) {
       const norm = text => String(text || "").replace(/\s+/g, " ").replace(/^\s*\$\s+/, "").trim();
+      const plain = line => norm(String(line)
+        .replace(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/, "")           // table divider row
+        .replace(/^\s*\|(.*)\|\s*$/, (_, cells) => cells.split("|").join(" "))     // table row
+        .replace(/^\s*(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/, "")                   // heading, quote, list marker
+        .replace(/!?\[([^\]]*)\]\([^)\s]*\)/g, "$1")                               // link or image: its text
+        .replace(/\*\*|__|`+|~~/g, "")                                              // bold, code, strikethrough
+        .replace(/^\s*```.*$/, ""));                                                // code fence
       const copied = norm(command);
-      if (norm(document.body?.innerText).includes(copied)) return {shownOnPage: true};
+      const pageText = norm(document.body?.innerText);
+      if (pageText.includes(copied)) return {shownOnPage: true};
+      const pagePlain = norm(pageText.replace(/\t/g, " "));
+      const lines = String(command).split(/\r?\n/).map(plain).filter(Boolean);
+      const hidden = lines.filter(line => !pagePlain.includes(line));
+      if (lines.length && !hidden.length) return {shownOnPage: true};
+      if (lines.length > 1 && hidden.length < lines.length) {
+        return {shownOnPage: false, shownPart: lines.filter(line => !hidden.includes(line)).join("\n").slice(0, 300),
+                hiddenPart: hidden.join("\n").slice(0, 500)};
+      }
       const onScreen = element => {
         const box = element.getBoundingClientRect();
         return box.width > 2 && box.height > 2 && box.right > 0 && box.bottom > 0 &&
@@ -928,6 +968,22 @@
       }
     }
 
+    // A script on this page tried to send a password or card number the person typed
+    // to another site (already stopped in the page). Shown, counted, and given to the
+    // model as evidence: the page is judged again with it.
+    const sendWarning = send => "Blocked: a script on this page tried to send the " + send.sent.join(" and ") +
+      " you typed to " + send.destination + ". This is how skimmers on hacked sites steal passwords and cards. Don't continue on this page.";
+    function secretSent(hook) {
+      let destination = "";
+      try { destination = new URL(String(hook.destination)).host; } catch { return; }
+      const kinds = (Array.isArray(hook.kinds) ? hook.kinds : []).filter(k => ["password", "card number"].includes(k));
+      if (!kinds.length) return;
+      secretSends.push({destination, sent: kinds, via: String(hook.via || "").slice(0, 30)});
+      banner(sendWarning(secretSends.at(-1)), "danger");
+      stat({event: "send blocked", detail: destination});
+      scheduleAssess();
+    }
+
     async function fileAttempt(hook) {
       const name = String(hook.name || pathOf(hook.href || "").split("/").pop() || "download").slice(0, 80);
       const action = hook.href
@@ -958,10 +1014,14 @@
 
     onHook = hook => {
       if (hook?.type === "clipboard") clipboardAttempt(hook);
+      else if (hook?.type === "send") secretSent(hook);
       else if (hook?.type === "download") fileAttempt(hook);
     };
     hookQueue.splice(0).forEach(hook => onHook(hook));
 
+    // Fields the person typed into (trusted input), for onClick.
+    const typedInto = new WeakSet();
+    on("input", event => { if (event.isTrusted && event.target instanceof Element) typedInto.add(event.target); }, true);
     on("click", onClick, true);
     on("auxclick", onClick, true);
     on("submit", onSubmit, true);
