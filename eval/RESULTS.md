@@ -44,6 +44,30 @@ options: `actEarly`, `floodTab` (a second tab opened first), `modelFault`
 Both miss e14. Single runs: borderline scenarios (e.g. d06) flip between runs.
 Raw run output: `eval/redteam/results/model-comparison-2026-11-23/`.
 
+## 2026-11-26 · v0.16.5: your own servers; "Proceed anyway" asked once
+
+Found in real use: the web page of a self-hosted model server (llama.cpp, on the user's
+Tailscale network) has an API key box that is always filled in. Every button click was held
+as "the page's script may send your password", the model called the server's Tailscale name
+a phishing domain, and "Proceed anyway" let only that one click through, so the next click was
+held again (a loop).
+
+- **Own network not checked:** the model server's tailnet (devices reached at
+  `name.<tailnet>.ts.net`, https only) and the model server itself when it runs on this Mac
+  (localhost). Not private IPs (on hotel or café Wi-Fi, 192.168.x is someone else's machine),
+  not plain http (a hostile network's DNS can answer for a ts.net name; only https proves it),
+  not other tailnets (Tailscale Funnel can publish those).
+- **Approval sticks:** once the model allows a held click, or the person presses "Proceed
+  anyway", other clicks on the page with the same filled-in secrets aren't held again (kept
+  as a hash, not text). A new or changed secret is checked again; sending it to another site
+  is still blocked.
+- Considered and dropped: telling the model when a page is on a private address. It would
+  soften judgment on fake captive portals (hostile Wi-Fi), and nothing showed it was needed.
+
+Lab 34/34 (7 new: own server, same tailnet, same tailnet over http, server at a private IP,
+another tailnet, server on a public site, "Proceed anyway" asked once; the first two and the
+last fail on v0.16.4). Stats, turns, archive and scope checks pass.
+
 ## 2026-11-25 · v0.16.4: typed secrets sent to another site (web skimmers)
 
 A British Airways-style skimmer (2018) is a few lines added to a genuine site's own script: it

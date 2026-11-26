@@ -81,6 +81,12 @@
     // to the model only if their code changed), and downloads and password
     // submissions on them are still held.
     const trusted = onSkipList(location.hostname, stored.settings?.skipSites || []);
+    // The person's own network: the model server set in Settings when it runs on this
+    // Mac, and on Tailscale every device on its tailnet (https only). Pages
+    // there (the model server's own web page, a NAS, a router) are not checked and
+    // nothing on them is held: there is nothing to protect the person from, and a
+    // server that is down or restarting must not lock its own page.
+    const own = onOwnNetwork(location, stored.settings?.llm);
     // Default ("moments"): pages open right away and are checked in the
     // background; what is held is the moment harm can happen: typing into password
     // or card fields, downloads, and commands put on the clipboard. Optional
@@ -229,7 +235,7 @@
       };
     })();
 
-    if (isTop && !trusted && coverAll) shield.raise();
+    if (isTop && !trusted && !own && coverAll) shield.raise();
     else window.__ssoEarlyCover?.remove();
 
     // Progress from the background script (e.g. "Taking a closer look at this site").
@@ -255,6 +261,10 @@
       websocket: /wss?:\/\//, obfuscatedNames: /_0x[0-9a-f]{2,}/i
     };
     const approved = new WeakSet();
+    // Filled-in secrets the person already let through on this page (by the model's
+    // "allow" or their own "Proceed anyway"), as hashes: other clicks with the same
+    // secrets aren't held again. A newly typed or changed secret is checked again.
+    const clearedSecrets = new Set();
 
     // ---- Signal collection ---------------------------------------------------
 
@@ -529,6 +539,7 @@
     }
 
     async function assessPage() {
+      if (own) return;
       await bypassReady;
       if (inFlight) {
         pending = true;
@@ -840,7 +851,8 @@
 
     // ---- Action gating -------------------------------------------------------
 
-    async function hold(event, target, action, resume) {
+    async function hold(event, target, action, resume, cleared) {
+      if (own) return;
       if (approved.has(target)) {
         approved.delete(target);
         return;
@@ -855,7 +867,7 @@
       const verdict = await send({type: "gate", action, signals: collect()});
       waiting.remove();
 
-      const go = () => { approved.add(target); resume(); };
+      const go = () => { approved.add(target); cleared?.(); resume(); };
       if (verdict?.decision === "allow") return go();
       if (verdict?.decision === "block") {
         return banner(verdict.checkFailed ? "Blocked: this page could not be checked although your model server is working."
@@ -887,12 +899,14 @@
       const filled = allInputs().filter(field => isSecretField(field) && field.value &&
         (field.getClientRects().length > 0 || typedInto.has(field)));
       if (!filled.length) return;
+      const secretsKey = hashOf(filled.map(f => f.name + "\u0000" + f.value).join("\u0001"));
+      if (clearedSecrets.has(secretsKey)) return;
       hold(event, button, {kind: "submit", form: {
         actionOrigin: "unknown: sent by the page's own script", method: "script", crossOrigin: null,
         hasPassword: filled.some(f => f.type === "password"), asksForPayment: filled.some(isPaymentField),
         ...(filled.some(isPhraseField) ? {asksForRecoveryPhrase: true} : {}),
         fields: filled.slice(0, 15).map(f => ({type: f.type, name: maskLongNumbers(clip(f.name, 40)), label: maskDigits(labelFor(f))}))
-      }}, () => button.click());
+      }}, () => button.click(), () => clearedSecrets.add(secretsKey));
     }
 
     function onSubmit(event) {
@@ -948,6 +962,7 @@
     async function clipboardAttempt(hook) {
       const command = String(hook.text || "").slice(0, 2000);
       if (!command) return;
+      if (own) return void navigator.clipboard.writeText(command).catch(() => {});
       clipboardCommands.push(command.slice(0, 300));
       const waiting = banner("This page tried to put a command on your clipboard. Checking it with your model\u2026", "info");
       const verdict = await send({type: "gate", action: {kind: "clipboard", command, via: String(hook.via || ""),
@@ -990,9 +1005,9 @@
         ? {kind: "download", url: String(hook.href)}
         : {kind: "download", file: {origin: "built by the page itself (" + String(hook.source) + " link)", name,
             size: hook.size, contentType: String(hook.contentType || "").slice(0, 100), prefix: String(hook.prefix || "")}};
-      const waiting = banner("Checking a file this page wants to save\u2026", "info");
-      const verdict = await send({type: "gate", action, signals: collect()});
-      waiting.remove();
+      const waiting = own ? null : banner("Checking a file this page wants to save\u2026", "info");
+      const verdict = own ? null : await send({type: "gate", action, signals: collect()});
+      waiting?.remove();
       const save = () => {
         const link = document.createElement("a");
         link.download = name;
@@ -1004,6 +1019,7 @@
         } else return;
         link.click();
       };
+      if (own) return save();
       if (verdict?.decision === "allow") banner("Your model checked " + name + " and found no problem.", "info", save, "Save file");
       else if (verdict?.decision === "block") banner("Blocked the file " + name + ". Open the extension for details.", "danger");
       else banner("The file " + name + " could not be checked.", "warn", () => {
@@ -1030,5 +1046,34 @@
   // A site matches if it is a listed domain or a subdomain of one.
   function onSkipList(host, list) {
     return list.some(domain => host === domain || host.endsWith("." + domain));
+  }
+
+  // Whether this page is on the person's own network (see "own" in start), counted
+  // only where it can be proven:
+  // - the model server's own address when it is this Mac (localhost);
+  // - on Tailscale, any device on the model server's tailnet, over https only: only
+  //   that tailnet can get a certificate for its names, while over http a hostile
+  //   network's DNS could answer for them.
+  // Not private IP addresses (192.168.x, 10.x): on hotel or café Wi-Fi the same
+  // address is someone else's machine. Not other ts.net names: Tailscale Funnel can
+  // publish anyone's to the internet.
+  function onOwnNetwork(location, llm) {
+    let server;
+    try {
+      server = new URL(llm?.kind === "ollama" ? llm.ollamaUrl || "http://localhost:11434" : llm?.customUrl);
+    } catch { return false; }
+    const serverHost = server.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    const host = String(location.hostname).replace(/^\[|\]$/g, "").toLowerCase();
+    const loopback = h => h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127\.\d+\.\d+\.\d+$/.test(h);
+    if (loopback(serverHost)) return host === serverHost;
+    const tailnet = server.protocol === "https:" && serverHost.match(/^[^.]+\.([^.]+\.ts\.net)$/)?.[1];
+    return !!tailnet && location.protocol === "https:" && (host === serverHost || host.endsWith("." + tailnet));
+  }
+
+  // A short hash (FNV-1a), so secrets the person let through aren't kept as text.
+  function hashOf(text) {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
+    return h.toString(36) + ":" + text.length;
   }
 })();

@@ -50,12 +50,15 @@ function gate(message, forced) {
   if (action.kind === "clipboard") {
     return action.shownOnPage !== false && ["install-docs.localhost", "chat-answer.localhost"].includes(host) ? "allow" : "block";
   }
+  // "gate-fails": the model gives no answer for actions (the person sees "Could not check this").
+  if (forced === "gate-fails") return undefined;
   if (action.kind === "download") return /\.html?$/i.test(action.file?.name || action.url || "") ? "block" : "allow";
   return (forced || judge(message)) === "safe" ? "allow" : "block";
 }
 
 async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto, typeFrame, verdict: forced, click, probeTop,
-                             pressBanner, saveFile, refuseBlockPage, urlSuffix = "", openedAnyway, breakStart, typed}) {
+                             pressBanner, saveFile, refuseBlockPage, urlSuffix = "", openedAnyway, breakStart, typed,
+                             server, at, steps}) {
   await get("/lab/received/clear");
   const context = await browser.newContext({viewport: {width: 1024, height: 768}, acceptDownloads: true});
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {origin: lab(site).slice(0, -1)});
@@ -63,6 +66,14 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
   const started = Date.now();
   // A navigation answered with 204 is cancelled: the page stays, as when Safari refuses.
   if (refuseBlockPage) await context.route("http://ext-refused.invalid/**", route => route.fulfill({status: 204}));
+  // at: open the lab site under another address (for example a Tailscale name).
+  if (at) await context.route(at + "**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    const file = "/site/lab/" + site + (path.endsWith("/") ? path + "index.html" : path);
+    try {
+      route.fulfill({body: readFileSync(file), contentType: file.endsWith(".js") ? "text/javascript" : "text/html"});
+    } catch { route.fulfill({status: 404}); }
+  });
   const page = await context.newPage();
   let downloads = 0;
   page.on("download", () => downloads++);
@@ -120,7 +131,7 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     };
     window.browser = {
       // breakStart: settings that make the page script throw while starting.
-      storage: {local: {get: async () => ({settings: {coverMode: "${mode}", skipSites: ${breakStart ? 42 : "[]"}}, seen: {}})}},
+      storage: {local: {get: async () => ({settings: {coverMode: "${mode}", skipSites: ${breakStart ? 42 : "[]"}${server ? ", llm: " + JSON.stringify({kind: "custom", customUrl: server, customModel: "lab"}) : ""}}, seen: {}})}},
       runtime: {
         // refuseBlockPage: the block page can't be opened (as when Safari refuses to
         // leave a page the user reached through its own warning).
@@ -137,7 +148,7 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     ${inspector}
   })();`);
 
-  await page.goto(lab(site) + urlSuffix, {waitUntil: "domcontentloaded"}).catch(() => {});
+  await page.goto((at || lab(site)) + urlSuffix, {waitUntil: "domcontentloaded"}).catch(() => {});
   // Is the extension's cover the topmost thing on screen (while the check is pending)?
   let coverOnTop = null;
   if (probeTop) {
@@ -181,6 +192,16 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     await page.locator(selector).pressSequentially(text, {delay: 10, timeout: 3000}).catch(() => {});
   }
   if (click) await page.locator(click).click({timeout: 1500}).catch(() => {});
+  // Steps in order: a click on the page, a press on one of the extension's buttons, or a pause.
+  for (const step of steps || []) {
+    if (step.click) await page.locator(step.click).click({timeout: 1500}).catch(() => {});
+    if (step.press) {
+      await page.waitForTimeout(1800);
+      const spot = await page.evaluate(label => window.__ssoButton?.(label), step.press).catch(() => null);
+      if (spot) await page.mouse.click(spot.x, spot.y);
+    }
+    await page.waitForTimeout(step.wait || 400);
+  }
   // A person accepting the extension's "Save file" once the check is done.
   if (saveFile) {
     await page.waitForTimeout(2500);
@@ -196,12 +217,13 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     redCover = r > 150 && g < 80 && b < 80;
   }
   const blocked = page.url().startsWith("about:blank#ext-blocked");
+  const title = blocked ? "" : await page.title().catch(() => "");
   const clipboard = blocked ? "" : await page.evaluate(() => navigator.clipboard.readText()).catch(() => "");
   const offered = blocked ? [] : await page.evaluate(() =>
     window.__ssoNotes ? window.__ssoNotes() : []).catch(() => []);
   const leaked = (await get("/lab/received")).filter(r => r.path === "/keys" || r.path === "/collect").length;
   await context.close();
-  return {name, blocked, redCover, leaked, failedReported: log.some(m => m.type === "failed"), downloads, clipboard, offered, coverOnTop,
+  return {name, blocked, redCover, title, leaked, failedReported: log.some(m => m.type === "failed"), downloads, clipboard, offered, coverOnTop,
           gates: log.filter(m => m.type === "gate").map(m => m.kind + ":" + m.decision + (process.env.VERBOSE && m.fileSize !== undefined ? "(" + m.fileSize + " bytes)" : "")),
           checks: log.filter(m => m.type === "assess").length,
           sends: log.filter(m => m.type === "assess" && m.secretSends).map(m => m.secretSends).at(-1) || [],
@@ -272,6 +294,27 @@ const scenarios = [
             has(r.gates, "clipboard:block")},
   // Costco Travel: radio buttons named carDrop... were taken for a card field, and a
   // hidden, AutoFilled sign-in box held every click.
+  // The person's own network (from the model server in Settings): a settings page with
+  // a pre-filled API key box is not checked or held. Another tailnet still is.
+  {name: "Own model server: its settings page not held", site: "key-settings", server: lab("key-settings") + "v1",
+   steps: [{click: "#save"}, {click: "#theme"}], ok: r => !r.gates.length && !r.checks && r.title.endsWith("save theme")},
+  {name: "Same tailnet as the model server: not held", site: "key-settings", at: "https://box.tailabc.ts.net/",
+   server: "https://rtx.tailabc.ts.net/v1", steps: [{click: "#save"}, {click: "#theme"}],
+   ok: r => !r.gates.length && !r.checks && r.title.endsWith("save theme")},
+  {name: "Same tailnet over plain http: still checked", site: "key-settings", at: "http://box.tailabc.ts.net/", verdict: "safe",
+   server: "https://rtx.tailabc.ts.net/v1", steps: [{click: "#save", wait: 2500}], ok: r => r.gates.length === 1 && r.checks > 0},
+  {name: "Model server at a private IP: page there still checked", site: "key-settings", at: "http://192.168.68.50:1234/",
+   verdict: "safe", server: "http://192.168.68.50:1234/v1", steps: [{click: "#save", wait: 2500}],
+   ok: r => r.gates.length === 1 && r.checks > 0},
+  {name: "Another tailnet: still checked", site: "key-settings", at: "https://box.tailother.ts.net/", verdict: "safe",
+   server: "https://rtx.tailabc.ts.net/v1", steps: [{click: "#save", wait: 2500}], ok: r => r.gates.length === 1 && r.checks > 0},
+  {name: "Model server on a public site: not trusted", site: "key-settings", verdict: "safe",
+   server: "https://models.example.com/v1", steps: [{click: "#save", wait: 2500}], ok: r => r.gates.length === 1},
+  // A pre-filled key box held every click, and "Proceed anyway" was asked again on
+  // the next one (a loop). Once let through, the same secrets aren't held again.
+  {name: "Proceed anyway is not asked again", site: "key-settings", verdict: "gate-fails",
+   steps: [{click: "#save"}, {press: "Proceed anyway"}, {click: "#theme"}, {click: "#save", wait: 800}],
+   ok: r => r.gates.length === 1 && r.title.endsWith("save theme save")},
   {name: "Control: travel site calendar click not held", site: "travel-booking", click: "#calendar",
    ok: r => !r.blocked && !r.gates.length},
   // Web skimmers on a trusted site (the page itself is judged safe): the card must not

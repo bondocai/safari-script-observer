@@ -1,0 +1,13 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Model server</title>
+<!-- A self-hosted model server's settings: the API key box is filled in from saved
+     settings (not typed), and the buttons are not form submits. -->
+<h1>Settings</h1>
+<label>API Key <input type="password" id="key" value="sk-local-0123456789abcdef"></label>
+<p><button id="save">Save</button> <button id="theme">Theme</button></p>
+<script>
+  for (const id of ["save", "theme"]) {
+    document.getElementById(id).addEventListener("click", () => { document.title += " " + id; });
+  }
+</script>
