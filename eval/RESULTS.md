@@ -44,6 +44,74 @@ options: `actEarly`, `floodTab` (a second tab opened first), `modelFault`
 Both miss e14. Single runs: borderline scenarios (e.g. d06) flip between runs.
 Raw run output: `eval/redteam/results/model-comparison-2026-11-23/`.
 
+## 2026-11-26 · v0.16.6: drawnBy is a fact; trusted sites can overrule; unencrypted is not malicious
+
+From the Safari control test: the site's own re-auth prompt (`own.html`) was blocked, then, once
+judged only "suspicious", every Continue was blocked again with no way through.
+
+- **drawnBy wording:** the model is told drawnBy is a recorded fact to use instead of guessing
+  which script drew a box; a site asking for its own password again is normal whatever widgets
+  the page loads. e14 vs its genuine twin, 3 runs each: before 4/4 caught / 0/4 OK; now **3/3
+  caught / 3/3 OK**. v0.16.5 for comparison: e14 0/3 caught, twin 3/3 OK.
+- **Unencrypted is not malicious:** plain http or a local or intranet address is no longer a
+  reason for the model to flag a page or block a send (the model's reasons on `own.html` were
+  all "http, localhost, no public records"). The extension itself tells the person when a
+  password or card number is about to go over http to another machine, with "Send anyway";
+  sends to this Mac get no notice.
+- **Trusted sites:** a model block of a password or payment send offers "Send anyway"; hard
+  evidence (a box drawn by a third party or untraceable code, a caught skimmer send, a
+  known-bad file) does not. Untrusted sites: blocks stay final, and say the site can be added
+  to Trusted sites.
+- **No loop:** the same filled-in secrets (with their destination) the model already blocked
+  are blocked again at once, without asking the model.
+- Harness fix: two scenarios declaring the same hostnames were served each other's files; the
+  twin now has its own names. (The twin is built from e14's files, so like the blind set it is
+  not in the public copy.)
+
+Lab 47/47 (5 new: trusted send anyway; hacked widget on a trusted site gets no override;
+second click not re-asked; unencrypted notice; unencrypted send anyway). Scope, stats, turns
+and archive checks pass. Checked in Safari: trusted `own.html` goes through, `append.html` is
+still blocked with no override.
+
+Red team, Qwen, full suite (63 attacks, 50 genuine incl. the twin): **62 stopped (53 blocked, 9
+warned or held), 1 missed (a08, phone callback scam, flips between runs); 48 OK, 2 false alarms
+(d02, f02: the known vendor-run government portals)**. e14 blocked; twin OK. Shift to watch: 6
+attacks were rated suspicious rather than malicious (a03, a09, a12, a13, c13, e10; 3 warned or
+held in the previous run). All were still stopped, and none of the model's reasons mention http
+or local addresses (they cite impersonation, invoice fraud, card requests in a chat).
+
+## 2026-11-26 · v0.16.6, first step: who drew the password box
+
+e14 (a hacked support widget on a trusted payroll site asks for the password again) was
+stopped since v0.16.4 only because the skimmer block caught the password leaving; the model
+still judged the page safe. Reading the send-block code found ways round it (removing the box
+before sending, scrambling the data, a text box styled as a password, sending from a frame),
+so instead of patching each one, the model is now told which script drew each password or card
+box: the page's HTML, the site's own scripts, a known sign-in or payment provider, a third-party
+site by name, or code with no traceable source.
+
+- Lab: 6 new attack variants of a hacked widget drawing a re-auth box (added with
+  `appendChild`, `innerHTML`, `eval`, a `blob:` script, a text box switched to password, and
+  `appendChild` borrowed from another frame), each sending the password XOR-scrambled after
+  removing the box. On v0.16.5 all 5 tested variants leaked; now all 6 are blocked before typing.
+  2 controls stay quiet: the payroll site's own re-auth prompt, and a sign-in provider's widget.
+- Red team, Qwen, full suite (63 attacks, 49 genuine): **62 stopped, 48 OK**. **e14 is now
+  judged malicious by the model** before the password box is reached ("This page uses a
+  hidden third-party script to steal your password…"). Missed: a08 (phone callback scam, no
+  typing; flips between runs). False alarm: f02 only (d02 passed this run).
+- **Correction (same day):** this first prompt wording caught e14 for the wrong reason. A
+  genuine twin of e14 (`x-own-reauth-twin`: same page and widget, the site's own script asks
+  for the password and posts to itself) was blocked 4 of 4 times: the model read "a chat or
+  help widget plus a password prompt" as theft and ignored drawnBy, which correctly said "this
+  site's own scripts". Found by the Safari control test below; fixed in the next entry.
+- Also: the page hook now reports through saved copies of `dispatchEvent` and `CustomEvent`,
+  so a page can no longer silence clipboard and skimmer reports by replacing them.
+- Real Safari (development build, lab pages served locally): a probe page (`lab/drawn-probe`)
+  shows all 9 kinds of box attributed correctly (own, own using a widget's code, third party by
+  appendChild / innerHTML / type switch, hidden by eval / blob:); all 6 attack pages blocked.
+
+Lab 42/42 (8 new). Scope check passes.
+
 ## 2026-11-26 · v0.16.5: your own servers; "Proceed anyway" asked once
 
 Found in real use: the web page of a self-hosted model server (llama.cpp, on the user's
@@ -274,6 +342,7 @@ day, before it was ever committed. The full run above confirms that decision.
 
 ## Known open issues
 
-- e14: a compromised third-party widget on a trusted site asks for the password; every host looks genuine.
+- Sites whose own sign-in code is served from another domain may have their password box called third party (none seen in the red team yet).
+- Which script drew a box is untested in real Safari (stack-trace format).
 - Government services run by vendors on commercial domains are flagged (d02, f02).
 - Real-Safari behaviour of `blob:` pages (`match_origin_as_fallback`) not yet confirmed outside the harness.

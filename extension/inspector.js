@@ -42,6 +42,37 @@
     try { onHook(JSON.parse(event.detail)); } catch {}
   }, true);
 
+  // Which script drew each input box (from pagehooks.js). The worst report per box is
+  // kept, and only a kind and a host name are taken from it: the words the model reads
+  // are written here, so a page can't put its own text into them.
+  const drawnRank = {html: 0, own: 1, provider: 2, "third party": 3, hidden: 4};
+  const drawn = new WeakMap();
+  on("__sso_drawn", event => {
+    try {
+      const field = event.composedPath()[0];
+      const report = JSON.parse(event.detail);
+      if (!(field instanceof Element) || !Object.hasOwn(drawnRank, report.kind)) return;
+      if (drawnRank[drawn.get(field)?.kind] >= drawnRank[report.kind]) return;
+      const host = /^[a-z0-9.-]{1,253}$/i.test(String(report.host || "")) ? String(report.host).toLowerCase() : "";
+      drawn.set(field, {kind: report.kind, host, untraced: report.untraced === true});
+    } catch {}
+  }, true);
+  function drawnBy(field) {
+    const d = drawn.get(field);
+    if (!d) return undefined;
+    if (d.kind === "html") return "the page's HTML, as the site sent it";
+    if (d.kind === "own") return "this site's own scripts" + (d.host ? ", using code from " + d.host : "");
+    if (d.kind === "provider") return "a sign-in or payment provider's script (" + d.host + ")";
+    if (d.kind === "third party") return "a script from " + d.host + ", a third party (not this site, not a known sign-in or payment provider)";
+    return d.untraced ? "hidden: it appeared after the page loaded in a way the extension could not trace"
+                      : "hidden: code with no traceable source (run through eval, a blob: script or similar)";
+  }
+  // The worst of several boxes (a form's password and card fields).
+  function drawnByWorst(fields) {
+    const worst = fields.filter(f => drawn.has(f)).sort((a, b) => drawnRank[drawn.get(b).kind] - drawnRank[drawn.get(a).kind])[0];
+    return worst && drawnBy(worst);
+  }
+
   // Settings (trusted sites, cover mode) and visit history are read from storage.
   // In "check every page" mode the page is already covered by cover-now.js.
   browser.storage.local.get(["settings", "seen"]).then(safeStart, () => safeStart({}));
@@ -343,6 +374,9 @@
         // Sign-up or password change rather than sign-in: phishing wants existing passwords.
         ...(createsPassword([...form.querySelectorAll('input[type="password"]')]) ? {createsNewPassword: true} : {}),
         asksForPayment: [...form.querySelectorAll("input, select")].some(isPaymentField),
+        // Which script drew its password or card boxes (see drawnBy above).
+        ...(() => { const by = drawnByWorst([...form.querySelectorAll("input, textarea")].filter(isSecretField));
+                    return by ? {drawnBy: by} : {}; })(),
         ...([...form.querySelectorAll("input, textarea")].some(isPhraseField) ? {asksForRecoveryPhrase: true} : {}),
         // Field types and labels only, never values.
         fields: [...form.querySelectorAll("input, select, textarea")].slice(0, 15).map(field => ({
@@ -390,7 +424,8 @@
           type: field.type, name: maskLongNumbers(clip(field.name, 40)), label: maskDigits(labelFor(field)),
           ...(isPhraseField(field) ? {recoveryPhrase: true} : {}),
           ...(field.type === "password" && createsPassword([field]) ? {createsNewPassword: true} : {}),
-          ...(field.getRootNode() !== document ? {inShadowRoot: true} : {})
+          ...(field.getRootNode() !== document ? {inShadowRoot: true} : {}),
+          ...(drawnBy(field) ? {drawnBy: drawnBy(field)} : {})
         })),
         externalLinkOrigins: [...new Set(links.map(a => originOf(a.href)).filter(o => o !== location.origin))].slice(0, 15),
         // Commands this page tried to put on the clipboard (blocked by pagehooks.js).
@@ -851,7 +886,22 @@
 
     // ---- Action gating -------------------------------------------------------
 
-    async function hold(event, target, action, resume, cleared) {
+    // Secrets (with where they go) the model already blocked on this page, as hashes:
+    // clicking again shows the block at once instead of asking the model again.
+    const blockedSecrets = new Set();
+    // Evidence no opinion can outweigh, so "Send anyway" is never offered for it, not
+    // even on a trusted site: a third party or untraceable code drew the box (a hacked
+    // widget, red-team e14). Skimming is stopped earlier, in hold().
+    const hardEvidence = form => /^(a script from|hidden:)/.test(String(form?.drawnBy || ""));
+    // Sent over plain http to anything but this Mac. A connection weakness the person
+    // is told about, not something the model judges.
+    function sendsInClear(form) {
+      let url;
+      try { url = new URL(/^https?:/.test(form?.actionOrigin || "") ? form.actionOrigin : location.href); } catch { return false; }
+      return url.protocol === "http:" && !isLoopback(url.hostname);
+    }
+
+    async function hold(event, target, action, resume, cleared, secretsKey) {
       if (own) return;
       if (approved.has(target)) {
         approved.delete(target);
@@ -862,16 +912,35 @@
       // This page's own scripts were caught sending a typed secret elsewhere: nothing
       // more is sent or saved from it.
       if (secretSends.length) return banner(sendWarning(secretSends.at(-1)), "danger");
+      const notTrustedHint = trusted ? "" : " If this is your own site, you can add it to Trusted sites in Settings.";
+      if (secretsKey && blockedSecrets.has(secretsKey)) {
+        return banner("Already blocked by your model for these details. Open the extension for details." + notTrustedHint, "danger");
+      }
 
       const waiting = banner("Checking with your model\u2026", "info");
       const verdict = await send({type: "gate", action, signals: collect()});
       waiting.remove();
 
       const go = () => { approved.add(target); cleared?.(); resume(); };
-      if (verdict?.decision === "allow") return go();
+      const clear = action.kind === "submit" && sendsInClear(action.form);
+      const unencrypted = "This site sends what you typed unencrypted: others on your network could read it.";
+      if (verdict?.decision === "allow") {
+        if (!clear) return go();
+        return banner(unencrypted, "warn", () => { stat({event: "override", detail: "sent unencrypted"}); go(); }, "Send anyway");
+      }
       if (verdict?.decision === "block") {
+        // On a site the person marked as trusted, the model's opinion is advice they
+        // may overrule; hard evidence is not.
+        if (trusted && action.kind === "submit" && !verdict.checkFailed && !hardEvidence(action.form)) {
+          return banner("Your model advised against sending this (open the extension for its reasons). You marked " +
+            "this site as trusted, so it is your call." + (clear ? " " + unencrypted : ""), "warn", () => {
+            stat({event: "override", detail: "sent anyway on a trusted site"});
+            go();
+          }, "Send anyway");
+        }
+        if (secretsKey && !verdict.checkFailed) blockedSecrets.add(secretsKey);
         return banner(verdict.checkFailed ? "Blocked: this page could not be checked although your model server is working."
-          : "Blocked by your model. Open the extension for details.", "danger");
+          : "Blocked by your model. Open the extension for details." + (hardEvidence(action.form) ? "" : notTrustedHint), "danger");
       }
       banner("Could not check this. " + (verdict?.summary || ""), "warn", () => {
         stat({event: "override", detail: "went ahead after a failed check"});
@@ -905,8 +974,9 @@
         actionOrigin: "unknown: sent by the page's own script", method: "script", crossOrigin: null,
         hasPassword: filled.some(f => f.type === "password"), asksForPayment: filled.some(isPaymentField),
         ...(filled.some(isPhraseField) ? {asksForRecoveryPhrase: true} : {}),
+        ...(drawnByWorst(filled) ? {drawnBy: drawnByWorst(filled)} : {}),
         fields: filled.slice(0, 15).map(f => ({type: f.type, name: maskLongNumbers(clip(f.name, 40)), label: maskDigits(labelFor(f))}))
-      }}, () => button.click(), () => clearedSecrets.add(secretsKey));
+      }}, () => button.click(), () => clearedSecrets.add(secretsKey), secretsKey);
     }
 
     function onSubmit(event) {
@@ -914,7 +984,9 @@
       if (!(form instanceof HTMLFormElement)) return;
       const described = describeForm(form);
       if (!described.hasPassword && !described.asksForPayment && !described.asksForRecoveryPhrase) return;
-      hold(event, form, {kind: "submit", form: described}, () => form.requestSubmit());
+      const filled = [...form.querySelectorAll("input, textarea")].filter(f => isSecretField(f) && f.value);
+      const secretsKey = filled.length ? hashOf(described.actionOrigin + "\u0002" + filled.map(f => f.name + "\u0000" + f.value).join("\u0001")) : null;
+      hold(event, form, {kind: "submit", form: described}, () => form.requestSubmit(), undefined, secretsKey);
     }
 
     // ---- Reports from pagehooks.js -------------------------------------------------
@@ -1064,10 +1136,15 @@
     } catch { return false; }
     const serverHost = server.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     const host = String(location.hostname).replace(/^\[|\]$/g, "").toLowerCase();
-    const loopback = h => h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127\.\d+\.\d+\.\d+$/.test(h);
-    if (loopback(serverHost)) return host === serverHost;
+    if (isLoopback(serverHost)) return host === serverHost;
     const tailnet = server.protocol === "https:" && serverHost.match(/^[^.]+\.([^.]+\.ts\.net)$/)?.[1];
     return !!tailnet && location.protocol === "https:" && (host === serverHost || host.endsWith("." + tailnet));
+  }
+
+  // This Mac itself: traffic to it never crosses a network.
+  function isLoopback(hostname) {
+    const h = String(hostname).replace(/^\[|\]$/g, "").toLowerCase();
+    return h === "localhost" || h.endsWith(".localhost") || h === "::1" || /^127\.\d+\.\d+\.\d+$/.test(h);
   }
 
   // A short hash (FNV-1a), so secrets the person let through aren't kept as text.

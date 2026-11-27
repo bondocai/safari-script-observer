@@ -8,6 +8,8 @@
 //      download links clicked by script while not attached to the page.
 //   3. A typed password or card number sent by script to another site (web
 //      skimmers such as the 2018 British Airways attack).
+//   4. Which script drew each input box (a password box drawn by a hacked
+//      third-party widget on a genuine site, for example).
 //
 // It only ever BLOCKS and REPORTS. The page shares this context and could fake
 // any message sent back here, so nothing is resumed from here: after the model
@@ -19,7 +21,10 @@
   if (!/^https?:$/.test(location.protocol) &&
       !(location.protocol === "blob:" && /^https?:\/\//.test(location.origin))) return;
 
-  const report = detail => window.dispatchEvent(new CustomEvent("__sso_hook", {detail: JSON.stringify(detail)}));
+  // Kept from before the page's scripts run, so a page can't silence reports by
+  // replacing dispatchEvent or CustomEvent.
+  const dispatch = EventTarget.prototype.dispatchEvent, NativeCustomEvent = CustomEvent;
+  const report = detail => dispatch.call(window, new NativeCustomEvent("__sso_hook", {detail: JSON.stringify(detail)}));
 
   // Commands that download or run code, decode hidden code, or weaken security:
   // what "paste this into Terminal / Run / PowerShell" scams put on the clipboard.
@@ -260,6 +265,162 @@
     if (/^src$/i.test(String(name)) && /^(IMG|SCRIPT|IFRAME)$/.test(this.tagName) &&
         stopsSecret(String(value), "", this.tagName.toLowerCase() + " address")) return;
     return setAttribute.call(this, name, value);
+  };
+
+  // ---- Which script drew a password or card box (hacked widgets, red-team e14) -------
+  // A hacked third-party script on a genuine site (a help or chat widget whose vendor
+  // was compromised) can draw its own "confirm your password" box. Every address
+  // involved is genuine; what gives it away is whose code drew the box. When an input
+  // box is put into the page, or switched to a password box, the call stack says which
+  // script did it, and the code that started the chain (the bottom of the stack) is
+  // reported: this site's own, a sign-in or payment provider's, a third party's, or
+  // code with no traceable source (eval, a blob: script). Boxes that appear after the
+  // page has loaded without passing through these hooks (inserted with functions taken
+  // from another frame, for example) are reported as untraceable.
+  // Sent on the field itself as a kind and a host only: inspector.js writes the words
+  // the model reads and keeps the worst report per field, so a fake report from the
+  // page can only make its own box look worse.
+  const NativeError = Error;
+  const pageSite = siteOf(location.hostname);
+  const drawnRank = {html: 0, own: 1, provider: 2, "third party": 3, hidden: 4};
+  const reported = new WeakMap(); // field -> rank of the worst report sent
+  const switchedByHook = new WeakSet();
+  let parsed = document.readyState !== "loading";
+  document.addEventListener("DOMContentLoaded", () => { parsed = true; }, {once: true, capture: true});
+
+  function sendDrawn(field, drawn) {
+    if (!drawn || (reported.get(field) ?? -1) >= drawnRank[drawn.kind]) return;
+    reported.set(field, drawnRank[drawn.kind]);
+    try {
+      dispatch.call(field, new NativeCustomEvent("__sso_drawn", {bubbles: true, composed: true, detail: JSON.stringify(drawn)}));
+    } catch {}
+  }
+  function frameOf(line) {
+    if (/\beval at\b|\beval code\b|^\s*eval@|Function code/.test(line)) return {kind: "hidden"};
+    const url = line.match(/((?:blob:)?https?:\/\/[^\s()]+?):\d+:\d+\)?\s*$/)?.[1];
+    if (!url || url.startsWith("blob:")) return {kind: "hidden"};
+    let host;
+    try { host = new URL(url).hostname; } catch { return {kind: "hidden"}; }
+    if (siteOf(host) === pageSite) return {kind: "own"};
+    return {kind: providerHost(host) ? "provider" : "third party", host};
+  }
+  // Must be called directly from a hook: the first two frames are this function and the hook.
+  function whoDrew() {
+    let stack = "";
+    const limit = NativeError.stackTraceLimit;
+    try { NativeError.stackTraceLimit = 200; } catch {}
+    try { stack = String(new NativeError().stack || ""); } catch {}
+    try { NativeError.stackTraceLimit = limit; } catch {}
+    const frames = stack.split("\n").map(l => l.trim()).filter(l => l && l !== "Error").slice(2)
+      // Built-in functions (forEach, Promise jobs) say nothing about who called them.
+      .filter(l => !/\[native code\]|\(<anonymous>\)$|\(native\)$/.test(l)).map(frameOf);
+    const bottom = frames.at(-1);
+    if (!bottom) return {kind: "hidden"};
+    if (bottom.kind !== "own") return bottom;
+    // The site's own code, through a third party's library: said, not counted against it.
+    const via = frames.find(f => f.kind === "third party");
+    return via ? {kind: "own", host: via.host} : bottom;
+  }
+  const isField = node => node?.nodeName === "INPUT" || node?.nodeName === "TEXTAREA";
+  function fieldsIn(nodes) {
+    const found = [];
+    for (const node of nodes) {
+      try {
+        if (isField(node)) found.push(node);
+        else if (node?.querySelectorAll && node.firstChild) found.push(...node.querySelectorAll("input, textarea"));
+      } catch {}
+    }
+    return found;
+  }
+  // Methods that put nodes into the page: which nodes, and whether they land in the page.
+  const insertions = [
+    [Node.prototype, ["appendChild"], a => [a[0]]], [Node.prototype, ["insertBefore", "replaceChild"], a => [a[0]]],
+    [Element.prototype, ["append", "prepend", "before", "after", "replaceWith", "replaceChildren"], a => a],
+    [Element.prototype, ["insertAdjacentElement"], a => [a[1]]],
+    [CharacterData.prototype, ["before", "after", "replaceWith"], a => a],
+    [DocumentFragment.prototype, ["append", "prepend", "replaceChildren"], a => a],
+    [Document.prototype, ["append", "prepend", "replaceChildren"], a => a],
+    [Range.prototype, ["insertNode"], a => [a[0]], range => range.startContainer?.isConnected]
+  ];
+  for (const [proto, names, nodesOf, landsInPage = target => target.isConnected] of insertions) {
+    for (const name of names) {
+      const original = proto[name];
+      if (typeof original !== "function") continue;
+      proto[name] = function (...args) {
+        let fields = [];
+        try { if (landsInPage(this)) fields = fieldsIn(nodesOf(args)); } catch {}
+        const drawn = fields.length ? whoDrew() : null;
+        const result = original.apply(this, args);
+        if (drawn) for (const field of fields) if (field.isConnected) sendDrawn(field, drawn);
+        return result;
+      };
+    }
+  }
+  // Markup set as text: the boxes it adds are the ones not there before.
+  const hasFieldMarkup = html => /<\s*(input|textarea)\b/i.test(String(html));
+  const newFields = (root, before) => fieldsIn([root]).filter(field => !before.has(field));
+  const markupSetters = [[Element.prototype, "innerHTML", self => self], [ShadowRoot.prototype, "innerHTML", self => self],
+                         [Element.prototype, "outerHTML", self => self.parentNode]];
+  for (const [proto, name, rootOf] of markupSetters) {
+    const property = Object.getOwnPropertyDescriptor(proto, name);
+    if (!property?.set) continue;
+    Object.defineProperty(proto, name, {...property, set(value) {
+      const root = this.isConnected && hasFieldMarkup(value) ? rootOf(this) : null;
+      const before = root ? new Set(fieldsIn([root])) : null;
+      const drawn = root ? whoDrew() : null;
+      property.set.call(this, value);
+      if (drawn) for (const field of newFields(root, before)) sendDrawn(field, drawn);
+    }});
+  }
+  for (const [proto, name, rootOf] of [[Element.prototype, "insertAdjacentHTML", (self, a) => /^(beforebegin|afterend)$/i.test(a[0]) ? self.parentNode : self],
+                                       [Element.prototype, "setHTMLUnsafe", self => self], [ShadowRoot.prototype, "setHTMLUnsafe", self => self]]) {
+    const original = proto[name];
+    if (typeof original !== "function") continue;
+    proto[name] = function (...args) {
+      const root = this.isConnected && hasFieldMarkup(args.at(-1)) ? rootOf(this, args) : null;
+      const before = root ? new Set(fieldsIn([root])) : null;
+      const drawn = root ? whoDrew() : null;
+      const result = original.apply(this, args);
+      if (drawn) for (const field of newFields(root, before)) sendDrawn(field, drawn);
+      return result;
+    };
+  }
+  // A box already in the page switched to a password box.
+  const inputType = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "type");
+  if (inputType?.set) {
+    Object.defineProperty(HTMLInputElement.prototype, "type", {...inputType, set(value) {
+      const drawn = this.isConnected && /^password$/i.test(String(value)) && this.type !== "password" ? whoDrew() : null;
+      inputType.set.call(this, value);
+      if (drawn) { switchedByHook.add(this); sendDrawn(this, drawn); }
+    }});
+  }
+  const setAttributeBefore = Element.prototype.setAttribute;
+  Element.prototype.setAttribute = function (name, value) {
+    const drawn = this.nodeName === "INPUT" && /^type$/i.test(String(name)) && /^password$/i.test(String(value)) &&
+      this.isConnected && this.type !== "password" ? whoDrew() : null;
+    const result = setAttributeBefore.call(this, name, value);
+    if (drawn) { switchedByHook.add(this); sendDrawn(this, drawn); }
+    return result;
+  };
+  // Everything else: boxes that reach the page without passing through the hooks above
+  // are the page's HTML while it is still being read, and untraceable after that.
+  const watch = root => new MutationObserver(records => {
+    const drawn = parsed ? {kind: "hidden", untraced: true} : {kind: "html"};
+    for (const record of records) {
+      if (record.type === "attributes") {
+        const field = record.target;
+        if (field.type === "password" && field.isConnected && !switchedByHook.has(field) && parsed) sendDrawn(field, drawn);
+        continue;
+      }
+      for (const field of fieldsIn(record.addedNodes)) if (field.isConnected && !reported.has(field)) sendDrawn(field, drawn);
+    }
+  }).observe(root, {childList: true, subtree: true, attributes: true, attributeFilter: ["type"]});
+  try { watch(document); } catch {}
+  const attachShadow = Element.prototype.attachShadow;
+  Element.prototype.attachShadow = function (options) {
+    const root = attachShadow.call(this, options);
+    try { watch(root); } catch {}
+    return root;
   };
 
   // Real clicks on blob/data links (registered before the page's own listeners).

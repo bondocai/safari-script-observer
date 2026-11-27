@@ -66,7 +66,9 @@ Form values, cookies, and passwords are never sent to any model.</p>
   <p class="hint">A domain also covers its subdomains (<code>mybank.com</code> includes <code>www.mybank.com</code>).
   Trusted sites open immediately, without the "Checking this page" cover. They are still watched: if their code
   changes (for example after a hack), your model checks them again and can still block them, and downloads,
-  password and payment submissions on them are still held. Your model only sees their structure (forms, scripts,
+  password and payment submissions on them are still held. If your model advises against sending a password or
+  card there, you can still send it anyway, except when the evidence is hard (a password box drawn by another
+  site's script, a script caught sending what you typed elsewhere). Your model only sees their structure (forms, scripts,
   frames), never their text, and no screenshots are taken. Add your bank here.</p>
 </fieldset>
 

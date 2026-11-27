@@ -95,12 +95,24 @@ const tasks = {
       "for a password or payment details, especially on a domain the user has never visited. A first visit on " +
       "its own is not a warning sign: every legitimate site is new to the user once. Treat it as weight only " +
       "alongside another sign such as a brand-domain mismatch, lookalike spelling, or credentials sent elsewhere. " +
+      "Plain http, or a local or intranet address (localhost, a private IP, a name with no public records), is a " +
+      "weakness of the connection, not a sign of who runs the page: the extension tells the user about unencrypted " +
+      "sending itself. On its own it does not make a page suspicious or malicious (routers, printers, NAS boxes, " +
+      "intranet apps and developer servers work this way); judge intent from the signs above. " +
       "For privacy the extension replaces every digit in visible text, titles, labels and alt text with #, and long " +
       "numbers in paths, field names and script excerpts with ####; this masking is not a sign of anything. On sites " +
       "the user marked as trusted, the visible text is withheld (text is empty and textWithheld is set): judge those " +
       "from forms, scripts, frames, and identity, and do not treat the missing text as suspicious. Forms show " +
       "hasPassword and asksForPayment; secretFields lists password and card fields that are not in a regular form " +
       "(the page's own script sends them); many legitimate web apps work this way, so judge them like a form. " +
+      "drawnBy (on forms and secretFields) is the browser's record of whose code put the password or card box on the " +
+      "page. It is a fact, not a guess: use it instead of guessing from the list of scripts which one drew the box. " +
+      "If drawnBy is the page's HTML, this site's own scripts, or a known sign-in or payment provider, the box is the " +
+      "site's own, whatever other scripts or widgets the page loads; a site asking for its own password again is " +
+      "normal and is not a reason for suspicion. Only if drawnBy names another site's script (not a known provider) or " +
+      "code with no traceable source did a third party draw the box: that is how a hacked widget on a genuine site " +
+      "steals passwords, so judge the page malicious even on an old, familiar, trusted site, unless that other site " +
+      "is plainly the site's own service under another domain (its own CDN, or its parent company). " +
       "recoveryPhrase (in secretFields) and asksForRecoveryPhrase (in forms) mark a field for a crypto wallet's " +
       "recovery (seed) phrase or private key. Whoever has it owns the wallet's funds, and legitimate services do not " +
       "ask for it on a web page, whatever the reason given (importing, syncing, verifying, 'read-only', 'processed " +
@@ -153,6 +165,8 @@ const tasks = {
       "a form submission with field types, labels, and destination, never values), the page signals, and the " +
       "earlier verdict on the page. Block downloads of malware, known-bad signatures, or files from a malicious " +
       "page. Block credential or payment submissions to a destination that looks like phishing, " +
+      "but not merely because the page or destination uses plain http or a local or intranet address: that is a " +
+      "connection weakness the extension tells the user about itself, not a sign of phishing. " +
       "and any submission of a wallet recovery phrase or private key (asksForRecoveryPhrase). For a zip, file.archive lists what is inside " +
       "(paths, sizes, passwordProtected, signatureMatch; zips inside zips are opened too): judge the contents, not " +
       "just the name. An archive presented as a document, invoice, photo or font that contains programs or scripts " +

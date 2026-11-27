@@ -74,7 +74,12 @@ itself, as in HTML smuggling), and commands a page tries to put on the clipboard
 ("paste this into Terminal" scams). An optional mode also covers every page until
 the model answers. Your **trusted sites** (Settings) open without
 waiting, but are still fingerprinted, re-checked by the model when their code
-changes, and still have downloads and password and payment submissions held.
+changes, and still have downloads and password and payment submissions held;
+there, a send your model advises against can still be sent anyway, unless the
+evidence is hard (a password box drawn by another site's script, a skimmer
+caught sending what you typed, a known-bad file). A password about to be sent
+unencrypted (plain http, to another machine) gets a notice; that is a weak
+connection, not a sign of phishing, so the model does not judge it.
 For trusted sites the model gets only the page's structure: never its text, and
 no screenshot. Pages checked in the last 24 hours with unchanged code and much
 the same wording are not sent to the model again (a trusted site that starts

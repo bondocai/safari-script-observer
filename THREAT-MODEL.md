@@ -41,7 +41,9 @@ fool, break or exhaust it.
 | Press the extension's own buttons, or remove its warnings | Warnings live in closed shadow roots and act only on real (trusted) clicks; the warning bar on a page opened anyway can't be removed by the page | Code |
 | Fake a go-ahead for a held action | Hooks in the page's own JavaScript context only block and report; nothing is resumed from there. After the model allows it, the extension's isolated script copies the command or saves the file itself, on your click. Forged reports can only add holds | Code |
 | Point the investigation at your Mac or home network (a form "destination" on 192.168.x.x, a name that resolves there, a redirect there) | Investigation requests go only to public internet addresses: names are resolved and checked, redirects are checked, and the address actually connected to is checked afterwards. Responses stop at 2 MB; slow-drip servers are cut off | Code (Mac app) |
+| Get a password sent unencrypted (plain http) | Not judged by the model (insecure is not malicious): the extension tells you before it is sent to another machine over http, and you can send anyway. Sends to this Mac (localhost) are not flagged | Code |
 | Send what you type to another site from its own scripts (skimming) | Requests carrying a typed password or card number to a different site are blocked before they leave; the page is judged again with that evidence | Code (in the page) |
+| Show a password or card box from a hacked widget on a trusted site | Which script drew each box is recorded and given to the model; a box drawn by a third party or untraceable code is judged theft | Code (in the page) + model |
 | Crash the extension's page script so the page is never checked | A start-up failure is reported and the page shows "not checked", rather than silently running unprotected | Code |
 | Hide a malicious file in an archive, or crash the archive reader | Zips are read in memory (never written to disk), 3 levels deep, with limits on size, entry count and time (5 seconds); a known-bad signature (e.g. EICAR) is always blocked, whatever the model says | Code |
 
@@ -51,7 +53,11 @@ A widget, analytics or chat script on a genuine site is altered to show a fake s
 or skim what you type. Every address involved is genuine, so the page looks right.
 
 - Trusted sites still have their code fingerprinted, are re-checked when it changes,
-  and have password and payment submissions and downloads held.
+  and have password and payment submissions and downloads held. When your model
+  advises against a password or payment send there, you can still choose **Send
+  anyway**: you vouched for the site, and the model's opinion is advice. Hard
+  evidence is never overridable, even there: a box drawn by a third party or
+  untraceable code (below), a caught skimmer send, a known-bad file.
 - **A script sending what you typed to another site** (a web skimmer, as in the 2018
   British Airways attack, where a few lines added to the site's own library sent card
   details to a lookalike domain on mouse-up, before the click) is stopped in the page:
@@ -65,10 +71,24 @@ or skim what you type. Every address involved is genuine, so the page looks righ
   encryption), data split across several requests, or sent by a route not covered
   (a fresh frame's own network functions, a form posted elsewhere after the click) is
   not recognised.
-- **Known limit:** when a hacked widget on a trusted site asks you to sign in again,
-  the model currently has no way to know which script drew the password box, and lets
-  it through (red-team scenario e14). This is the closest test to the supply-chain
-  case and is an open problem.
+- **A script drawing its own password box** (a hacked widget asking you to sign in
+  again, red-team scenario e14): the extension records which script put each password
+  or card box on the page, or turned a text box into one. It reads the script's call
+  trail at that moment and takes where it started, so the site's own code calling a
+  library from a CDN still counts as the site's own. The model is told one of: the
+  page's HTML as sent, the site's own scripts, a known sign-in or payment provider, a
+  script from another named site, or code with no traceable source (run through
+  `eval`, a `blob:` script, or added in a way the extension could not trace). The model
+  is told this is a recorded fact to use instead of guessing from the page's scripts:
+  a box the site drew itself is normal however many widgets the page loads, and a box
+  drawn by a third party or by untraceable code is treated as theft, even on a trusted
+  site, unless the third party is plainly the site's own service. The page reports only
+  a category and a host name; the extension writes the words the model reads, and a
+  remembered "safe" verdict is not reused once such a box appears. **Limits:** an
+  attacker who gets the site's own scripts to draw the box (by changing the site's
+  own files, rather than a widget's) looks like the site; sites whose own sign-in code
+  is served from another domain may be called third party and rely on the model to
+  recognise it. Checked in real Safari (its stack-trace format) as well as Chromium.
 
 ### The model server or the model
 
@@ -115,7 +135,8 @@ for flagged pages, blocked actions and your overrides; shown and cleared in Sett
 ## Non-goals and known limits
 
 - **A perfect copy** of a genuine page, served from an address that is genuinely the
-  site's (a hacked site, or a hacked widget on it), may not be caught.
+  site's (a hacked site whose own files were changed), may not be caught. A hacked
+  third-party widget on it is covered above.
 - **Scripts that run while a page loads** have already run before the verdict arrives;
   only actions you take are held.
 - **Downloads started by redirects or by sending the page to a file's address** (rather

@@ -7,8 +7,11 @@
 // flags a page as malicious when the signals it receives show a password or
 // card field on a site other than examplebank, tech-support-scam text, or a
 // clipboard command; it blocks clipboard commands except on the install-docs
-// control, and blocks HTML files the page built itself. So a failure here means
-// the evidence never reached the model, not that a model misjudged it.
+// control, and blocks HTML files the page built itself. On payroll-portal (a genuine
+// site the person uses, where asking for the password again is normal) it acts as the
+// real model did in red-team scenario e14: safe, unless the evidence says the password
+// box was drawn by a third party's script or by code whose origin is hidden. So a
+// failure here means the evidence never reached the model, not that a model misjudged it.
 //
 // Limitation: Playwright runs all of these scripts in the page's own context,
 // while Safari runs inspector.js in an isolated one. Paths where the extension
@@ -37,6 +40,10 @@ function judge(message) {
   const secretFields = (s.forms || []).some(f => f.hasPassword || f.asksForPayment) || (s.secretFields || []).length > 0;
   const host = new URL(s.page?.origin || "http://none").hostname;
   if (host === "install-docs.localhost" || host === "travel-booking.localhost") return "safe";
+  if (host === "payroll-portal.localhost") {
+    const drawnBy = [...(s.forms || []), ...(s.secretFields || [])].map(f => String(f.drawnBy || ""));
+    return drawnBy.some(d => /third party|hidden/i.test(d)) ? "malicious" : "safe";
+  }
   if (secretFields && host !== "examplebank.localhost") return "malicious";
   if ((s.clipboardCommands || []).length) return "malicious";
   if (/infected|call .*support/i.test((s.text || "") + " " + (s.page?.title || ""))) return "malicious";
@@ -58,7 +65,7 @@ function gate(message, forced) {
 
 async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto, typeFrame, verdict: forced, click, probeTop,
                              pressBanner, saveFile, refuseBlockPage, urlSuffix = "", openedAnyway, breakStart, typed,
-                             server, at, steps}) {
+                             server, at, steps, routes, trust, pageVerdict, gateVerdict}) {
   await get("/lab/received/clear");
   const context = await browser.newContext({viewport: {width: 1024, height: 768}, acceptDownloads: true});
   await context.grantPermissions(["clipboard-read", "clipboard-write"], {origin: lab(site).slice(0, -1)});
@@ -74,6 +81,13 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
       route.fulfill({body: readFileSync(file), contentType: file.endsWith(".js") ? "text/javascript" : "text/html"});
     } catch { route.fulfill({status: 404}); }
   });
+  // routes: serve another address from a lab site's files (address prefix -> lab site).
+  for (const [prefix, labSite] of Object.entries(routes || {})) {
+    await context.route(prefix + "**", route => {
+      const file = "/site/lab/" + labSite + new URL(route.request().url()).pathname;
+      try { route.fulfill({body: readFileSync(file), contentType: "text/javascript"}); } catch { route.fulfill({status: 404}); }
+    });
+  }
   const page = await context.newPage();
   let downloads = 0;
   page.on("download", () => downloads++);
@@ -84,19 +98,20 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     const message = JSON.parse(json);
     const entry = {type: message.type, kind: message.action?.kind, at: Date.now() - started, top: message.top,
                    secretSends: message.signals?.secretSends,
+                   drawnBy: [...(message.signals?.forms || []), ...(message.signals?.secretFields || [])].map(f => f.drawnBy).filter(Boolean),
                    fileSize: message.action?.file?.size, shownOnPage: message.action?.shownOnPage,
                    hiddenPart: message.action?.hiddenPart};
     log.push(entry);
     if (message.type !== "assess" && message.type !== "gate") return "null";
     await new Promise(resolve => setTimeout(resolve, 1200)); // model time
     if (message.type === "gate") {
-      entry.decision = gate(message, forced);
+      entry.decision = gate(message, gateVerdict || forced);
       return JSON.stringify({decision: entry.decision});
     }
     if (message.asksForSecrets && !message.screenshotTaken && !message.trusted) return JSON.stringify({needScreenshot: true});
     // "no-answer": the check fails (the model timed out or errored).
     if (forced === "no-answer") { entry.verdict = "none"; return "null"; }
-    const verdict = forced || judge(message);
+    const verdict = forced || pageVerdict || judge(message);
     const result = {verdict, summary: "stand-in model", ...(openedAnyway ? {allowedByUser: true} : {}), source: "lab check", bypassToken: "00000000-0000-0000-0000-000000000000"};
     entry.verdict = verdict;
     if (!message.top && verdict === "malicious") {
@@ -131,7 +146,7 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     };
     window.browser = {
       // breakStart: settings that make the page script throw while starting.
-      storage: {local: {get: async () => ({settings: {coverMode: "${mode}", skipSites: ${breakStart ? 42 : "[]"}${server ? ", llm: " + JSON.stringify({kind: "custom", customUrl: server, customModel: "lab"}) : ""}}, seen: {}})}},
+      storage: {local: {get: async () => ({settings: {coverMode: "${mode}", skipSites: ${breakStart ? 42 : JSON.stringify(trust || [])}${server ? ", llm: " + JSON.stringify({kind: "custom", customUrl: server, customModel: "lab"}) : ""}}, seen: {}})}},
       runtime: {
         // refuseBlockPage: the block page can't be opened (as when Safari refuses to
         // leave a page the user reached through its own warning).
@@ -192,8 +207,12 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
     await page.locator(selector).pressSequentially(text, {delay: 10, timeout: 3000}).catch(() => {});
   }
   if (click) await page.locator(click).click({timeout: 1500}).catch(() => {});
-  // Steps in order: a click on the page, a press on one of the extension's buttons, or a pause.
+  // Steps in order: typing, a click on the page, a press on one of the extension's buttons, or a pause.
   for (const step of steps || []) {
+    if (step.type) {
+      await page.locator(step.type).click({timeout: 1500}).catch(() => {});
+      await page.locator(step.type).pressSequentially(step.text, {delay: 10, timeout: 3000}).catch(() => {});
+    }
     if (step.click) await page.locator(step.click).click({timeout: 1500}).catch(() => {});
     if (step.press) {
       await page.waitForTimeout(1800);
@@ -226,6 +245,7 @@ async function run(browser, {name, site, mode = "moments", wait = 6000, typeInto
   return {name, blocked, redCover, title, leaked, failedReported: log.some(m => m.type === "failed"), downloads, clipboard, offered, coverOnTop,
           gates: log.filter(m => m.type === "gate").map(m => m.kind + ":" + m.decision + (process.env.VERBOSE && m.fileSize !== undefined ? "(" + m.fileSize + " bytes)" : "")),
           checks: log.filter(m => m.type === "assess").length,
+          drawnBy: [...new Set(log.flatMap(m => m.drawnBy || []))],
           sends: log.filter(m => m.type === "assess" && m.secretSends).map(m => m.secretSends).at(-1) || [],
           arrived: (await get("/lab/received")).map(r => r.site + r.path),
           copies: log.filter(m => m.type === "gate" && m.kind === "clipboard").map(m => ({shown: m.shownOnPage, hidden: m.hiddenPart || ""})),
@@ -245,6 +265,8 @@ function pixel(png) {
   const raw = inflateSync(Buffer.concat(data));
   return [raw[1], raw[2], raw[3]]; // after the row's filter byte
 }
+// A person waits for the prompt, types the password and presses Continue.
+const reauth = [{wait: 4500}, {type: "#rp", text: "Canary-Pass-e14"}, {click: "#rp-go", wait: 3000}];
 const scenarios = [
   // Step 1: evasion of the page scan.
   {name: "Login inside a full-page frame", site: "shared-doc", ok: r => r.blocked},
@@ -328,7 +350,41 @@ const scenarios = [
   {name: "Control: checkout with analytics, card to its own site", site: "shop-checkout", verdict: "safe", click: "#pay",
    typed: {"#cc-num": "4111111111111111", "#cc-exp": "09/29"},
    ok: r => !has(r.offered, "tried to send") && r.arrived.includes("shop-checkout/pay") && r.arrived.includes("analytics-sink/events")},
-  {name: "Control: real bank login", site: "examplebank", typeInto: "#p", ok: r => !r.blocked}
+  {name: "Control: real bank login", site: "examplebank", typeInto: "#p", ok: r => !r.blocked},
+  // A hacked help widget on a genuine payroll site asks for the password again (red-team
+  // e14). Every address is genuine; the evidence is which script drew the box. It must
+  // be stopped before anything is typed: once typed, the password can leave scrambled
+  // (as here), so the send is no longer recognisable.
+  ...[["appendChild", "append"], ["innerHTML", "inner"], ["origin hidden by eval", "eval"],
+      ["origin hidden by a blob: script", "blob"], ["text box switched to password", "switch"], ["appendChild borrowed from a fresh frame", "borrowed"]].map(([how, file]) => (
+    {name: "Hacked widget asks for the password (" + how + ")", site: "payroll-portal", urlSuffix: file + ".html", wait: 4000,
+     steps: reauth, ok: r => r.blocked && !r.leaked})),
+  {name: "Control: payroll site's own password prompt", site: "payroll-portal", urlSuffix: "own.html", wait: 4000, steps: reauth,
+   ok: r => !r.blocked && r.title.endsWith("signed in") && r.arrived.includes("payroll-portal/session") && !has(r.offered, "unencrypted")},
+  // The model's opinion on a site the person trusts is advice: "Send anyway" (lab sites
+  // are on this Mac, so no unencrypted notice).
+  {name: "Trusted site: model blocks the password, person sends anyway", site: "payroll-portal", urlSuffix: "own.html",
+   trust: ["payroll-portal.localhost"], gateVerdict: "malicious", wait: 4000, steps: [...reauth, {press: "Send anyway", wait: 2000}],
+   ok: r => has(r.gates, "submit:block") && r.title.endsWith("signed in") && r.arrived.includes("payroll-portal/session")},
+  // Hard evidence is not overridable, even on a trusted site judged safe: a third party drew the box.
+  {name: "Trusted site: hacked widget's box gets no 'Send anyway'", site: "payroll-portal", urlSuffix: "append.html",
+   trust: ["payroll-portal.localhost"], pageVerdict: "safe", gateVerdict: "malicious", wait: 4000,
+   steps: [...reauth, {press: "Send anyway", wait: 2000}],
+   ok: r => has(r.gates, "submit:block") && !r.leaked && has(r.offered, "Blocked by your model") && !has(r.offered, "Send anyway")},
+  // Clicking again with the same password shows the block without asking the model again.
+  {name: "Blocked password: a second click doesn't ask the model again", site: "payroll-portal", urlSuffix: "own.html",
+   gateVerdict: "malicious", wait: 4000, steps: [...reauth, {click: "#rp-go", wait: 2500}],
+   ok: r => r.gates.filter(g => g.startsWith("submit:")).length === 1 && has(r.offered, "Already blocked") &&
+            has(r.offered, "Trusted sites") && !r.title.endsWith("signed in")},
+  // Plain http to another machine: told, never judged; the person can still send.
+  {name: "Unencrypted password send: person is told", site: "payroll-portal", urlSuffix: "own.html", at: "http://payroll.corp.example/",
+   pageVerdict: "safe", gateVerdict: "safe", wait: 4000, steps: reauth,
+   ok: r => has(r.gates, "submit:allow") && has(r.offered, "unencrypted") && !r.title.endsWith("signed in")},
+  {name: "Unencrypted password send: person sends anyway", site: "payroll-portal", urlSuffix: "own.html", at: "http://payroll.corp.example/",
+   pageVerdict: "safe", gateVerdict: "safe", wait: 4000, steps: [...reauth, {press: "Send anyway", wait: 2000}],
+   ok: r => has(r.gates, "submit:allow") && r.title.endsWith("signed in")},
+  {name: "Control: sign-in provider's widget draws the box", site: "payroll-portal", urlSuffix: "provider.html", wait: 4000,
+   routes: {"https://cdn.auth0.com/": "provider-widget"}, steps: reauth, ok: r => !r.blocked && r.title.endsWith("signed in")}
 ];
 
 const browser = await chromium.launch();
@@ -338,6 +394,7 @@ let failures = 0;
 for (const scenario of scenarios.filter(s => !process.env.ONLY || new RegExp(process.env.ONLY, "i").test(s.name + " " + s.site))) {
   const r = await run(browser, scenario);
   if (process.env.VERBOSE) console.log("   offered:", JSON.stringify(r.offered));
+  if (process.env.VERBOSE && r.drawnBy.length) console.log("   drawnBy:", JSON.stringify(r.drawnBy));
   const ok = !!scenario.ok(r);
   if (!ok) failures++;
   const details = [

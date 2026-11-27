@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Drawn-by probe</title>
+<style>body{font:15px system-ui;margin:24px}pre{background:#f3f3f3;padding:12px;white-space:pre-wrap}input{display:block;margin:4px 0}</style>
+<script>
+// Lab diagnostic (not an attack): shows what the extension's page hook reports about
+// who drew each input box, so the stack-trace parsing can be checked in real Safari.
+const seen = [];
+document.addEventListener("__sso_drawn", e => { seen.push((e.target.id || "?") + " -> " + e.detail); show(); }, true);
+function show() {
+  document.getElementById("out").textContent =
+    "Expected:\n  own-*, eval-box (page runs eval itself): own\n  page-calls-widget: own, host helpwidget.localhost\n  third-*: third party helpwidget.localhost\n  eval-later, blob-box: hidden\n\nReported:\n  " +
+    (seen.join("\n  ") || "(nothing yet)") + "\n\nSample stack from the third-party script:\n" + (window.__probeStack || "(none)");
+}
+</script>
+<script src="http://helpwidget.localhost:8765/probe.js"></script></head>
+<body><h1>Drawn-by probe</h1><p>Boxes appear below after about 2 seconds. No data is sent anywhere.</p>
+<div id="boxes"></div><pre id="out">(waiting)</pre>
+<script>
+setTimeout(() => {
+  const box = document.getElementById("boxes");
+  const a = document.createElement("input"); a.type = "password"; a.id = "own-append"; a.placeholder = "own (appendChild)"; box.appendChild(a);
+  const d = document.createElement("div"); d.innerHTML = '<input type="password" id="own-inner" placeholder="own (innerHTML)">'; box.appendChild(d);
+  eval('var e=document.createElement("input");e.type="password";e.id="eval-box";e.placeholder="eval";document.getElementById("boxes").appendChild(e)');
+  const src = 'var b=document.createElement("input");b.type="password";b.id="blob-box";b.placeholder="blob script";document.getElementById("boxes").appendChild(b)';
+  const s = document.createElement("script"); s.src = URL.createObjectURL(new Blob([src], {type: "text/javascript"})); document.head.appendChild(s);
+  window.probePageCalls();
+  setTimeout(show, 1500);
+}, 2000);
+</script></body></html>

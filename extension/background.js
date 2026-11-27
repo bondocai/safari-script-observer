@@ -106,7 +106,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
 // What the page script may report the user chose to do despite a warning.
 const overrideKinds = new Set(["typed on a suspicious page", "typed on an unchecked page", "typed a card number",
-  "typed a recovery phrase", "went ahead after a failed check", "copied a command anyway", "saved a file anyway"]);
+  "typed a recovery phrase", "went ahead after a failed check", "copied a command anyway", "saved a file anyway",
+  "sent anyway on a trusted site", "sent unencrypted"]);
 
 // The address a page is checked under. A page a site builds in the browser
 // itself (blob:https://site/<id>, e.g. HTML smuggling) belongs to that site.
@@ -606,9 +607,11 @@ async function assessPage(tabId, signals, newPage, fpSource, context = {}) {
     // when the page's text or title changed a lot since its last check (the code
     // fingerprint leaves text out, so a page rewritten by its own scripts would
     // otherwise get its old verdict back). Nor once the extension has caught the
-    // page sending typed secrets away or planting a command: that is new evidence
-    // the old verdict never saw.
-    const caughtSomething = signals.secretSends?.length || signals.clipboardCommands?.length;
+    // page sending typed secrets away or planting a command, or a password or card
+    // box drawn by a third party's script: that is new evidence the old verdict never saw.
+    const strangeBox = [...(signals.forms || []), ...(signals.secretFields || [])]
+      .some(f => /^(a script from|hidden:)/.test(String(f.drawnBy || "")));
+    const caughtSomething = signals.secretSends?.length || signals.clipboardCommands?.length || strangeBox;
     const remembered = fingerprint && !context.textChanged && !caughtSomething &&
       await rememberedVerdict(pageKey, fingerprint, sketch).catch(() => null);
     if (remembered) {
