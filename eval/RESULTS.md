@@ -16,6 +16,7 @@ committed.
 | Scope check | `node eval/scope-check.mjs` | Scripts sharing a page or the background never declare the same name twice (run by the release script) |
 | Native check | `eval/native-check/run.sh` | The Mac app's HTTP code: investigation reaches only public addresses (names, redirects), 2 MB cap, slow servers cut off |
 | Red team | `MODEL_URL=… MODEL=… API_KEY=… node eval/redteam/run.mjs --only '^[a-h]'` | End to end: real extension code, real model, Chromium, offline lab |
+| Claude baseline | `ANTHROPIC_API_KEY=… node eval/redteam/claude-relay.mjs`, then the red team with `MODEL_URL=http://127.0.0.1:8788/v1 MODEL=claude-sonnet-5-5` | Lab-only comparison against a cloud model; only the synthetic test pages are sent |
 
 Red-team scenarios are written by agents that never see the extension or each
 other's work (`eval/redteam/SPEC.md`). Each round is blind only the first
@@ -24,6 +25,35 @@ time it runs; fixes informed by a round make later runs of it non-blind.
 `x-*` scenarios are self-tests written knowing the code (not blind). Harness-only
 options: `actEarly`, `floodTab` (a second tab opened first), `modelFault`
 (`{"down": true}` or `{"when": "text"}` to simulate the model server failing).
+
+## 2026-11-28 · Baselines: Claude Sonnet 5.5 and Inkling 2 Mini vs the local Qwen (v0.16.6 code, full suite)
+
+Same extension code and the same 113 scenarios (63 attacks, 50 genuine) as the v0.16.6 Qwen run.
+Claude is a **lab-only measuring stick**: `eval/redteam/claude-relay.mjs` answers the harness's
+OpenAI-style calls through Anthropic's API, with thinking off and the JSON answer enforced by
+structured outputs. Only the synthetic test pages were sent; the extension never uses a cloud
+model. Inkling 2 Mini ran on a Mac through Ollama.
+
+| | qwen3.8-27b-abliterated | Claude Sonnet 5.5 | Inkling 2 Mini |
+|---|---|---|---|
+| Attacks stopped | **62/63** (missed a08) | 60/63 (missed a13, e07, e13) | 57/63 (4 of them stopped unflagged; missed a01, c12, e06, e07, e13, x-sleeper-text) |
+| Legitimate OK | **48/50** (false alarms d02, f02) | 47/50 (false alarms b02, d10, f02) | 25/50 (23 false alarms, 2 warned) |
+| Cost | none (own hardware) | ~$3.39 for 420 calls, 0 refusals | none |
+
+- **The local Qwen does at least as well as a frontier cloud model** on this suite, so the
+  model is not what limits the extension.
+- **f02 (state tax-refund portal run by a vendor) is a false alarm for all three models**: the
+  fix belongs in what the extension tells the model about the page, not in the model.
+- **Extension gap found (e07, e13):** Sonnet rated both pages *suspicious*, yet a wallet recovery
+  phrase typed into a support chat (e07) and a password typed into a box that is not a password
+  field (e13) were sent. On a merely suspicious page nothing typed outside a password field is
+  checked; Qwen stopped both only because it rated the pages *malicious*.
+- **Inkling 2 Mini is not usable as the judge**: it blocked SSO and OAuth sign-ins, hosted and
+  embedded checkouts, payroll, the patient portal, exports and downloads, and the plain sample
+  page. On 6 scenarios its verdict was still pending when the test acted.
+
+Single runs each; borderline scenarios (a08, a13, d02) flip between runs.
+Raw output: `eval/redteam/results/2026-11-28T01-55-51/` (Sonnet), `2026-11-28T02-56-44/` (Inkling).
 
 ## 2026-11-23 · v0.14.5
 
@@ -238,7 +268,7 @@ false alarms, 1.9 s per check; lab check 21/21; archive check 15/15; turns check
 
 Raw output: `eval/redteam/results/v0.16-before-after/`.
 
-**Candidate second judge: Gemma 4 12B (Ollama on a 16 GB Mac mini M4, a second machine), same v0.16.0 code.**
+**Candidate second judge: Gemma 4 12B (Ollama on a second machine), same v0.16.0 code.**
 Eval: 32/33 caught, 1/24 false alarms, 4.5 s per check. Full red team (rounds 1–4 plus
 self-tests): 50/61 attacks stopped (11 missed, including both sleeper self-tests),
 21/45 legitimate OK (24 false alarms). Many pages were still "checking" when the harness
@@ -344,5 +374,6 @@ day, before it was ever committed. The full run above confirms that decision.
 
 - Sites whose own sign-in code is served from another domain may have their password box called third party (none seen in the red team yet).
 - Which script drew a box is untested in real Safari (stack-trace format).
-- Government services run by vendors on commercial domains are flagged (d02, f02).
+- Government services run by vendors on commercial domains are flagged (d02, f02); Sonnet 5.5 flags f02 too.
+- On a page rated only suspicious, secrets typed outside a password field (a chat box, a look-alike password box) are not checked before they are sent (e07, e13).
 - Real-Safari behaviour of `blob:` pages (`match_origin_as_fallback`) not yet confirmed outside the harness.
